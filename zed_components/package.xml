@@ -17,6 +17,8 @@
     <depend>backward_ros</depend>
     <depend>nlohmann-json-dev</depend>    
     <depend>zed_msgs</depend>
+    <depend>flux_cpp</depend>
+    <buildtool_depend>flux_gen</buildtool_depend>
     <depend>rclcpp</depend>
     <depend>rclcpp_components</depend>
     <depend>rcutils</depend>

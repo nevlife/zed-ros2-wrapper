@@ -185,6 +185,7 @@ void ZedCameraOne::initParameters()
   if (!_svoMode) {
     getVideoParams();
   }
+  getFluxParams();
 
   // SENSORS parameters
   getSensorsParams();

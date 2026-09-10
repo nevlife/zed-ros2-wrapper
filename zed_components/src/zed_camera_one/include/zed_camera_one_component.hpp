@@ -18,7 +18,13 @@
 #define ENABLE_STREAM_INPUT 1
 
 #include <atomic>
+#include <memory>
+#include <unordered_set>
+
+#define SL_ENABLE_ADVANCED_CAPTURE_API
 #include <sl/CameraOne.hpp>
+
+#include "flux/ros/publisher.hpp"
 
 #include "sl_version.hpp"
 #include "sl_tools.hpp"
@@ -110,6 +116,9 @@ protected:
   bool areSensorsTopicsSubscribed();
   void retrieveImages(bool gpu);
   void publishImages();
+  void getFluxParams();
+  void publishFluxColorImage();
+  bool fluxCopyRawNv12(void * raw_surface, std::uint8_t * dst, std::uint32_t w, std::uint32_t h);
   void publishColorImage(const rclcpp::Time & timeStamp);
   void publishColorRawImage(const rclcpp::Time & timeStamp);
   void publishGrayImage(const rclcpp::Time & timeStamp);
@@ -363,6 +372,17 @@ private:
 
   sl::Mat _matColor, _matColorRaw;
   sl::Mat _matGray, _matGrayRaw;
+
+  // flux shared-memory channel for the color image, same topic name as _imgColorTopic.
+  // The SDK retrieves straight into a loaned slot, so the frame is copied GPU->slot once.
+  bool _fluxEnabled = false;
+  bool _fluxRectified = true;
+  // RawBuffer path: the ISP's own NV12 capture buffer, mapped for the CPU and copied into the
+  // slot. No CUDA pass at all, so no GPU load per frame; the image is unrectified NV12.
+  bool _fluxRawNv12 = false;
+  int _fluxSlotCount = 8;
+  std::unique_ptr<flux::ros::Publisher> _fluxPub;
+  std::unordered_set<void *> _fluxMappedSurfaces;  // pooled by the SDK; mapped once, never unmapped
   // <---- Publisher variables
 
   // ----> Parameters
