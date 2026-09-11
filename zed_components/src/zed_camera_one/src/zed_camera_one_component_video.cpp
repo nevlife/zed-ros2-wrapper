@@ -171,6 +171,8 @@ void ZedCameraOne::initVideoPublishers()
   _imgRawGrayTopic = make_topic(sensor, gray_prefix, raw_prefix, image_topic);
   // <---- Advertised topics
 
+  initFluxPublisher();
+
   // ----> Create publishers
   auto qos = _qos.get_rmw_qos_profile();
 
@@ -519,6 +521,44 @@ void ZedCameraOne::getFluxParams()
     " * flux slot count: ", false, 2, 64);
 }
 
+std::size_t ZedCameraOne::fluxFrameBytes() const
+{
+  const std::size_t w = static_cast<std::size_t>(_matResol.width);
+  const std::size_t h = static_cast<std::size_t>(_matResol.height);
+  if (_fluxRawNv12) {
+    return w * h * 3 / 2;  // Y plane, then interleaved UV at half height
+  }
+#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 51
+  return w * h * (_24bitMode ? 3 : 4);
+#else
+  return w * h * 4;
+#endif
+}
+
+void ZedCameraOne::initFluxPublisher()
+{
+  using Image = sensor_msgs::flux_msg::Image;
+  if (!_fluxEnabled) {
+    return;
+  }
+  const std::uint32_t slot =
+    static_cast<std::uint32_t>(fluxFrameBytes() + Image::kScalarBytes + 256);
+  try {
+    _fluxPub = std::make_unique<flux::ros::Publisher>(
+      *this, _imgColorTopic, Image::kFingerprint, slot,
+      static_cast<std::uint32_t>(_fluxSlotCount));
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR_STREAM(get_logger(), "flux publisher failed, flux disabled: " << e.what());
+    _fluxEnabled = false;
+    return;
+  }
+  RCLCPP_INFO_STREAM(
+    get_logger(), " * flux channel: " << _imgColorTopic << " -> " << _fluxPub->segment_name()
+                                      << " (" << _matResol.width << "x" << _matResol.height
+                                      << (_fluxRawNv12 ? " nv12" : " bgra") << ", "
+                                      << _fluxSlotCount << " slots)");
+}
+
 void ZedCameraOne::publishFluxColorImage()
 {
   using Image = sensor_msgs::flux_msg::Image;
@@ -533,27 +573,9 @@ void ZedCameraOne::publishFluxColorImage()
 #endif
   const std::uint32_t w = static_cast<std::uint32_t>(_matResol.width);
   const std::uint32_t h = static_cast<std::uint32_t>(_matResol.height);
-  // NV12 is the ISP's native layout: Y plane then interleaved UV at half height, 1.5 B/px.
-  // The step field carries the Y row pitch; height stays the image height.
+  // The step field carries the row pitch of the first plane: w for NV12, w*c for packed.
   const std::uint32_t c = _fluxRawNv12 ? 1u : (bgr ? 3u : 4u);
-  const std::size_t nbytes = _fluxRawNv12 ? static_cast<std::size_t>(w) * h * 3 / 2
-    : static_cast<std::size_t>(w) * h * c;
-
-  if (!_fluxPub) {
-    const std::uint32_t slot = static_cast<std::uint32_t>(nbytes + Image::kScalarBytes + 256);
-    try {
-      _fluxPub = std::make_unique<flux::ros::Publisher>(
-        *this, _imgColorTopic, Image::kFingerprint, slot,
-        static_cast<std::uint32_t>(_fluxSlotCount));
-    } catch (const std::exception & e) {
-      RCLCPP_ERROR_STREAM(get_logger(), "flux publisher failed, flux disabled: " << e.what());
-      _fluxEnabled = false;
-      return;
-    }
-    RCLCPP_INFO_STREAM(
-      get_logger(), " * flux channel: " << _imgColorTopic << " -> " << _fluxPub->segment_name()
-                                        << " (" << w << "x" << h << "x" << c << ")");
-  }
+  const std::size_t nbytes = fluxFrameBytes();
 
   Image::Builder b = Image::build__(*_fluxPub);
   if (!b) {
@@ -665,7 +687,7 @@ bool ZedCameraOne::fluxCopyRawNv12(
 
 void ZedCameraOne::handleImageRetrievalAndPublishing()
 {
-  if (_fluxEnabled) {
+  if (_fluxEnabled && _fluxPub) {
     publishFluxColorImage();
   }
 

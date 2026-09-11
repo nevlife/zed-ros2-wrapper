@@ -117,6 +117,8 @@ protected:
   void retrieveImages(bool gpu);
   void publishImages();
   void getFluxParams();
+  void initFluxPublisher();
+  std::size_t fluxFrameBytes() const;
   void publishFluxColorImage();
   bool fluxCopyRawNv12(void * raw_surface, std::uint8_t * dst, std::uint32_t w, std::uint32_t h);
   void publishColorImage(const rclcpp::Time & timeStamp);
