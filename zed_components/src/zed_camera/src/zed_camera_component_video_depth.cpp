@@ -24,6 +24,8 @@
 
 #include <image_transport/camera_common.hpp>
 
+#include "sensor_msgs/flux/image.hpp"
+
 namespace
 {
 // Pluginlib's class loader is not thread-safe during the first dlopen of a
@@ -96,6 +98,8 @@ void ZedCamera::initVideoDepthPublishers()
   // ROI mask topic
   mRoiMaskTopic = mTopicRoot + "roi_mask/image";
   mRoiMaskTopic = get_node_topics_interface()->resolve_topic_name(mRoiMaskTopic);
+
+  initFluxPublishers();
 
   // ----> Camera publishers
   auto qos = mQos.get_rmw_qos_profile();
@@ -1134,7 +1138,8 @@ bool ZedCamera::isDepthRequired()
   // the Custom OD inference never produces output (is_new stays false forever).
   bool depth_required_for_od = mObjDetRunning;
 
-  return tot_sub > 0 || depth_required_for_pos_trk || depth_required_for_od;
+  return tot_sub > 0 || depth_required_for_pos_trk || depth_required_for_od ||
+         mFluxPubDepth != nullptr;
 }
 
 void ZedCamera::applyDepthSettings()
@@ -1506,12 +1511,115 @@ void ZedCamera::readSceneIlluminance()
 }
 #endif
 
+void ZedCamera::getFluxParams()
+{
+  RCLCPP_INFO(get_logger(), "=== FLUX parameters ===");
+  sl_tools::getParam(
+    shared_from_this(), "flux.enable", mFluxEnabled, mFluxEnabled,
+    " * flux left, right and depth channels: ");
+  sl_tools::getParam(
+    shared_from_this(), "flux.rectified", mFluxRectified, mFluxRectified,
+    " * flux images rectified: ");
+  sl_tools::getParam(
+    shared_from_this(), "flux.slot_count", mFluxSlotCount, mFluxSlotCount,
+    " * flux slot count: ", false, 2, 64);
+}
+
+void ZedCamera::initFluxPublishers()
+{
+  using Image = sensor_msgs::flux_msg::Image;
+  if (!mFluxEnabled) {
+    return;
+  }
+  const std::size_t w = mMatResol.width;
+  const std::size_t h = mMatResol.height;
+  const std::uint32_t count = static_cast<std::uint32_t>(mFluxSlotCount);
+  auto make_pub = [&](const std::string & topic, std::size_t frame_bytes) {
+      const std::uint32_t slot = static_cast<std::uint32_t>(frame_bytes + Image::kScalarBytes + 256);
+      auto pub = std::make_unique<flux::ros::Publisher>(
+        *this, topic, Image::kFingerprint, slot, count);
+      RCLCPP_INFO_STREAM(
+        get_logger(), " * flux channel: " << topic << " -> " << pub->segment_name());
+      return pub;
+    };
+  const std::size_t color_bytes = w * h * (m24bitMode ? 3 : 4);
+  mFluxPubLeft = make_pub(mFluxRectified ? mLeftTopic : mLeftRawTopic, color_bytes);
+  mFluxPubRight = make_pub(mFluxRectified ? mRightTopic : mRightRawTopic, color_bytes);
+  if (!mDepthDisabled) {
+    mFluxPubDepth = make_pub(mDepthTopic, w * h * sizeof(float));
+  }
+}
+
+void ZedCamera::publishFluxImages()
+{
+  using Image = sensor_msgs::flux_msg::Image;
+
+  auto ts = mUsePubTimestamps ? get_clock()->now() :
+    sl_tools::slTime2Ros(
+    mZed->getTimestamp(sl::TIME_REFERENCE::IMAGE), get_clock()->get_clock_type());
+  const std::int64_t ns = ts.nanoseconds();
+  const std::uint32_t w = mMatResol.width;
+  const std::uint32_t h = mMatResol.height;
+
+  auto publish = [&](flux::ros::Publisher & pub, std::uint32_t channels, const char * encoding,
+      const std::string & frame_id, auto retrieve) {
+      Image::Builder b = Image::build__(pub);
+      if (!b) {
+        DEBUG_VD("flux: every slot borrowed, frame dropped");
+        return;
+      }
+      flux::wire::Span<std::uint8_t> data =
+        b.alloc__data(static_cast<std::size_t>(w) * h * channels);
+      if (retrieve(data.data()) != sl::ERROR_CODE::SUCCESS) {
+        return;
+      }
+      b.set__header__stamp(
+        static_cast<std::int32_t>(ns / 1000000000LL), static_cast<std::uint32_t>(ns % 1000000000LL));
+      b.set__header__frame_id(frame_id);
+      b.set__height(h);
+      b.set__width(w);
+      b.set__encoding(encoding);
+      b.set__is_bigendian(0);
+      b.set__step(w * channels);
+      b.commit__();
+    };
+
+  const std::uint32_t c = m24bitMode ? 3u : 4u;
+  const char * color_encoding = m24bitMode ? "bgr8" : "bgra8";
+  const sl::MAT_TYPE color_type = m24bitMode ? sl::MAT_TYPE::U8_C3 : sl::MAT_TYPE::U8_C4;
+  auto color = [&](sl::VIEW view) {
+      return [&, view](std::uint8_t * dst) {
+               sl::Mat mat(
+                 mMatResol, color_type, reinterpret_cast<sl::uchar1 *>(dst), w * c, sl::MEM::CPU);
+               return mZed->retrieveImage(mat, view, sl::MEM::CPU, mMatResol);
+             };
+    };
+  publish(
+    *mFluxPubLeft, c, color_encoding, mLeftCamOptFrameId,
+    color(mFluxRectified ? (m24bitMode ? sl::VIEW::LEFT_BGR : sl::VIEW::LEFT_BGRA) :
+    (m24bitMode ? sl::VIEW::LEFT_UNRECTIFIED_BGR : sl::VIEW::LEFT_UNRECTIFIED_BGRA)));
+  publish(
+    *mFluxPubRight, c, color_encoding, mRightCamOptFrameId,
+    color(mFluxRectified ? (m24bitMode ? sl::VIEW::RIGHT_BGR : sl::VIEW::RIGHT_BGRA) :
+    (m24bitMode ? sl::VIEW::RIGHT_UNRECTIFIED_BGR : sl::VIEW::RIGHT_UNRECTIFIED_BGRA)));
+  if (mFluxPubDepth) {
+    publish(
+      *mFluxPubDepth, sizeof(float), sensor_msgs::image_encodings::TYPE_32FC1, mDepthOptFrameId,
+      [&](std::uint8_t * dst) {
+        sl::Mat mat(
+          mMatResol, sl::MAT_TYPE::F32_C1, reinterpret_cast<sl::uchar1 *>(dst),
+          w * sizeof(float), sl::MEM::CPU);
+        return mZed->retrieveMeasure(mat, sl::MEASURE::DEPTH, sl::MEM::CPU, mMatResol);
+      });
+  }
+}
+
 void ZedCamera::processVideoDepth()
 {
   DEBUG_VD("=== Process Video/Depth ===");
 
   // If no subscribers, do not retrieve data
-  if (areVideoDepthSubscribed()) {
+  if (areVideoDepthSubscribed() || mFluxPubLeft) {
     DEBUG_VD(" * [processVideoDepth] vd_lock -> defer");
     std::unique_lock<std::mutex> vd_lock(mVdMutex, std::defer_lock);
 
@@ -1573,7 +1681,11 @@ void ZedCamera::retrieveVideoDepth(bool gpu)
     DEBUG_STREAM_VD(" *** Depth Data retrieved ***");
   }
 
-  if (retrieved_video || retrieved_depth) {
+  if (mFluxPubLeft) {
+    publishFluxImages();
+  }
+
+  if (retrieved_video || retrieved_depth || mFluxPubLeft) {
     mSdkGrabTS = mZed->getTimestamp(sl::TIME_REFERENCE::IMAGE);
     auto now = mZed->getTimestamp(sl::TIME_REFERENCE::CURRENT);
     DEBUG_STREAM_VD(
@@ -1587,7 +1699,7 @@ void ZedCamera::retrieveVideoDepth(bool gpu)
 
 bool ZedCamera::retrieveLeftImage(bool gpu)
 {
-  if (mRgbSubCount + mLeftSubCount + mStereoSubCount > 0) {
+  if (mRgbSubCount + mLeftSubCount + mStereoSubCount > 0 && !mFluxPubLeft) {
     DEBUG_VD(" * Retrieving Left image");
     bool ok = sl::ERROR_CODE::SUCCESS ==
       mZed->retrieveImage(
@@ -1630,7 +1742,7 @@ bool ZedCamera::retrieveLeftRawImage(bool gpu)
 
 bool ZedCamera::retrieveRightImage(bool gpu)
 {
-  if (mRightSubCount + mStereoSubCount > 0) {
+  if (mRightSubCount + mStereoSubCount > 0 && !mFluxPubLeft) {
     DEBUG_VD(" * Retrieving Right image");
     bool ok = sl::ERROR_CODE::SUCCESS ==
       mZed->retrieveImage(
@@ -1739,7 +1851,7 @@ bool ZedCamera::retrieveRightRawGrayImage(bool gpu)
 
 bool ZedCamera::retrieveDepthMap(bool gpu)
 {
-  if (mDepthSubCount > 0 || mDepthInfoSubCount > 0) {
+  if ((mDepthSubCount > 0 && !mFluxPubLeft) || mDepthInfoSubCount > 0) {
     DEBUG_STREAM_VD(" * Retrieving Depth Map");
     bool ok = sl::ERROR_CODE::SUCCESS ==
       mZed->retrieveMeasure(
@@ -1913,7 +2025,7 @@ bool ZedCamera::checkGrabAndUpdateTimestamp(rclcpp::Time & out_pub_ts)
 
 void ZedCamera::publishLeftAndRgbImages(const rclcpp::Time & t)
 {
-  if (mLeftSubCount > 0) {
+  if (mLeftSubCount > 0 && !mFluxPubLeft) {
     DEBUG_STREAM_VD(" * mLeftSubCount: " << mLeftSubCount);
 
     if (_nitrosDisabled) {
@@ -1932,7 +2044,7 @@ void ZedCamera::publishLeftAndRgbImages(const rclcpp::Time & t)
     publishCameraInfo(mPubLeftCamInfoTrans, mLeftCamInfoMsg, t);
   }
 
-  if (mRgbSubCount > 0) {
+  if (mRgbSubCount > 0 && !mFluxPubLeft) {
     DEBUG_STREAM_VD(" * mRgbSubCount: " << mRgbSubCount);
 
     if (_nitrosDisabled) {
@@ -2077,7 +2189,7 @@ void ZedCamera::publishLeftRawGrayAndRgbRawGrayImages(const rclcpp::Time & t)
 
 void ZedCamera::publishRightImages(const rclcpp::Time & t)
 {
-  if (mRightSubCount > 0) {
+  if (mRightSubCount > 0 && !mFluxPubLeft) {
     DEBUG_STREAM_VD(" * mRightSubCount: " << mRightSubCount);
     if (_nitrosDisabled) {
       publishImageWithInfo(
@@ -2165,7 +2277,7 @@ void ZedCamera::publishRightRawGrayImages(const rclcpp::Time & t)
 
 void ZedCamera::publishStereoImages(const rclcpp::Time & t)
 {
-  if (mStereoSubCount > 0) {
+  if (mStereoSubCount > 0 && !mFluxPubLeft) {
     DEBUG_STREAM_VD(" * mStereoSubCount: " << mStereoSubCount);
     auto combined = sl_tools::imagesToROSmsg(
       mMatLeft, mMatRight, mCenterFrameId, t, mUsePubTimestamps);
@@ -2217,7 +2329,7 @@ void ZedCamera::publishStereoRawImages(const rclcpp::Time & t)
 
 void ZedCamera::publishDepthImage(const rclcpp::Time & t)
 {
-  if (mDepthSubCount > 0) {
+  if (mDepthSubCount > 0 && !mFluxPubLeft) {
     publishDepthMapWithInfo(mMatDepth, t);
   } else {
     publishCameraInfo(mPubDepthCamInfo, mLeftCamInfoMsg, t);

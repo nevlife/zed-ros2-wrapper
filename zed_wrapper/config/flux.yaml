@@ -1,4 +1,4 @@
-# Parameter override applied by zed_multi_camera.launch.py
+# Parameter override applied by the multi camera launch files and zed2i_camera.py
 
 /**:
     ros__parameters:

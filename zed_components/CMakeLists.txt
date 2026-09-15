@@ -84,7 +84,7 @@ endif()
 # Dependencies
 find_package(nlohmann_json REQUIRED)
 
-# flux shared-memory publisher (zed_camera_one, `flux.enable` parameter)
+# flux shared-memory publisher (zed_camera and zed_camera_one, `flux.enable` parameter)
 find_package(flux_cpp REQUIRED)
 find_package(flux_gen REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -329,7 +329,10 @@ add_library(zed_camera_component SHARED
     ${SL_TOOLS_SRC}
     ${ZED_CAMERA_INC}
     ${ZED_CAMERA_SRC}
+    "${FLUX_ADAPTERS}/sensor_msgs/flux/image.hpp"
 )
+target_include_directories(zed_camera_component PRIVATE "${FLUX_ADAPTERS}")
+target_link_libraries(zed_camera_component flux_cpp::flux_cpp)
 target_include_directories(zed_camera_component PUBLIC
     ${CUDA_INCLUDE_DIRS}
     ${ZED_INCLUDE_DIRS}

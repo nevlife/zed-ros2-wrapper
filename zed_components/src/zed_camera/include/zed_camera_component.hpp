@@ -17,11 +17,14 @@
 
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <sl/Camera.hpp>
 #include <sl/Fusion.hpp>
 #include <unordered_set>
 
 #include <sensor_msgs/msg/point_cloud2.hpp>
+
+#include "flux/ros/publisher.hpp"
 
 #include "sl_version.hpp"
 #include "sl_tools.hpp"
@@ -73,10 +76,12 @@ protected:
   void getBodyTrkParams();
   void getStreamingServerParams();
   void getAdvancedParams();
+  void getFluxParams();
 
   void setTFCoordFrameNames();
   void initPublishers();
   void initVideoDepthPublishers();
+  void initFluxPublishers();
 
   void initSubscribers();
 
@@ -293,6 +298,7 @@ protected:
   bool retrieveConfidence(bool gpu);
   bool retrieveDisparityMap();
   bool retrieveDepthInfo();
+  void publishFluxImages();
 
   void publishVideoDepth(rclcpp::Time & out_pub_ts);
   void publishLeftAndRgbImages(const rclcpp::Time & t);
@@ -1032,6 +1038,13 @@ private:
   sl::Mat mMatLeftGray, mMatLeftRawGray;
   sl::Mat mMatRightGray, mMatRightRawGray;
   sl::Mat mMatDepth, mMatDispMap, mMatDispImg, mMatConf;
+
+  bool mFluxEnabled = false;
+  bool mFluxRectified = true;
+  int mFluxSlotCount = 8;
+  std::unique_ptr<flux::ros::Publisher> mFluxPubLeft;
+  std::unique_ptr<flux::ros::Publisher> mFluxPubRight;
+  std::unique_ptr<flux::ros::Publisher> mFluxPubDepth;
 
   float mMinDepth = 0.0f;
   float mMaxDepth = 0.0f;
