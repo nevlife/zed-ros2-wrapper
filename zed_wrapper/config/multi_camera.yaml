@@ -1,4 +1,4 @@
-# Camera list read by zed_multi_camera.launch.py
+# Camera list read by zedonex_multi_camera.launch.py
 
 camera_model: zedxonegs
 
