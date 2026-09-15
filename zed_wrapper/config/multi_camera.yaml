@@ -1,0 +1,9 @@
+# Camera list read by zed_multi_camera.launch.py
+
+camera_model: zedxonegs
+
+serials: [301629094, 306659055, 307180250, 300454585,
+          309698970, 305397799, 300774207, 304001187]
+
+# Start interval in seconds: opening the cameras at once fails with CAMERA STREAM FAILED TO START
+stagger: 6.0

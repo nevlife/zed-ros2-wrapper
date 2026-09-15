@@ -1,0 +1,10 @@
+# Parameter override applied by zed_multi_camera.launch.py
+
+/**:
+    ros__parameters:
+        general:
+            pub_resolution: "NATIVE" # flux.raw_nv12 publishes the sensor-resolution ISP buffer
+        flux:
+            enable: true
+            raw_nv12: false
+            slot_count: 8
