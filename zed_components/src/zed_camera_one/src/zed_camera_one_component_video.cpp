@@ -13,10 +13,6 @@
 // limitations under the License.
 
 #include "zed_camera_one_component.hpp"
-
-#include "sensor_msgs/flux/image.hpp"
-
-#include <nvbufsurface.h>
 #include "sl_logging.hpp"
 
 #include <cstring>
@@ -25,6 +21,9 @@
 
 #include <sensor_msgs/distortion_models.hpp>
 #include <sensor_msgs/image_encodings.hpp>
+#include <nvbufsurface.h>
+
+#include "sensor_msgs/flux/image.hpp"
 
 namespace
 {
@@ -521,177 +520,110 @@ void ZedCameraOne::getFluxParams()
     " * flux slot count: ", false, 2, 64);
 }
 
-std::size_t ZedCameraOne::fluxFrameBytes() const
-{
-  const std::size_t w = static_cast<std::size_t>(_matResol.width);
-  const std::size_t h = static_cast<std::size_t>(_matResol.height);
-  if (_fluxRawNv12) {
-    return w * h * 3 / 2;  // Y plane, then interleaved UV at half height
-  }
-#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 51
-  return w * h * (_24bitMode ? 3 : 4);
-#else
-  return w * h * 4;
-#endif
-}
-
 void ZedCameraOne::initFluxPublisher()
 {
   using Image = sensor_msgs::flux_msg::Image;
   if (!_fluxEnabled) {
     return;
   }
-  const std::uint32_t slot =
-    static_cast<std::uint32_t>(fluxFrameBytes() + Image::kScalarBytes + 256);
-  try {
-    _fluxPub = std::make_unique<flux::ros::Publisher>(
-      *this, _imgColorTopic, Image::kFingerprint, slot,
-      static_cast<std::uint32_t>(_fluxSlotCount));
-  } catch (const std::exception & e) {
-    RCLCPP_ERROR_STREAM(get_logger(), "flux publisher failed, flux disabled: " << e.what());
-    _fluxEnabled = false;
-    return;
-  }
+  _fluxRectified = _fluxRectified && !_fluxRawNv12;
+  const std::string & topic = _fluxRectified ? _imgColorTopic : _imgColorRawTopic;
+  const std::size_t w = _matResol.width;
+  const std::size_t h = _matResol.height;
+  const std::size_t frame_bytes = _fluxRawNv12 ? w * h * 3 / 2 : w * h * (_24bitMode ? 3 : 4);
+  const std::uint32_t slot = static_cast<std::uint32_t>(frame_bytes + Image::kScalarBytes + 256);
+  _fluxPub = std::make_unique<flux::ros::Publisher>(
+    *this, topic, Image::kFingerprint, slot, static_cast<std::uint32_t>(_fluxSlotCount));
   RCLCPP_INFO_STREAM(
-    get_logger(), " * flux channel: " << _imgColorTopic << " -> " << _fluxPub->segment_name()
-                                      << " (" << _matResol.width << "x" << _matResol.height
-                                      << (_fluxRawNv12 ? " nv12" : " bgra") << ", "
-                                      << _fluxSlotCount << " slots)");
+    get_logger(), " * flux channel: " << topic << " -> " << _fluxPub->segment_name());
 }
 
-void ZedCameraOne::publishFluxColorImage()
+void ZedCameraOne::publishFluxImage(const rclcpp::Time & timeStamp)
 {
   using Image = sensor_msgs::flux_msg::Image;
 
-#if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 51
-  const bool bgr = _24bitMode;
-  const sl::VIEW view = _fluxRectified ? (bgr ? sl::VIEW::LEFT_BGR : sl::VIEW::LEFT_BGRA)
-    : (bgr ? sl::VIEW::LEFT_UNRECTIFIED_BGR : sl::VIEW::LEFT_UNRECTIFIED_BGRA);
-#else
-  const bool bgr = false;
-  const sl::VIEW view = _fluxRectified ? sl::VIEW::LEFT : sl::VIEW::LEFT_UNRECTIFIED;
-#endif
-  const std::uint32_t w = static_cast<std::uint32_t>(_matResol.width);
-  const std::uint32_t h = static_cast<std::uint32_t>(_matResol.height);
-  // The step field carries the row pitch of the first plane: w for NV12, w*c for packed.
-  const std::uint32_t c = _fluxRawNv12 ? 1u : (bgr ? 3u : 4u);
-  const std::size_t nbytes = fluxFrameBytes();
-
   Image::Builder b = Image::build__(*_fluxPub);
   if (!b) {
-    return;  // every slot borrowed: best-effort drop
-  }
-  flux::wire::Span<std::uint8_t> data = b.alloc__data(nbytes);
-  if (!b.ok__()) {
+    DEBUG_VD("flux: every slot borrowed, frame dropped");
     return;
   }
+  const std::uint32_t w = _matResol.width;
+  const std::uint32_t h = _matResol.height;
+  const std::uint32_t c = _fluxRawNv12 ? 1u : (_24bitMode ? 3u : 4u);
+  const char * encoding = _fluxRawNv12 ? "nv12" : (_24bitMode ? "bgr8" : "bgra8");
+  flux::wire::Span<std::uint8_t> data = b.alloc__data(_fluxRawNv12 ? w * h * 3 / 2 : w * h * c);
 
   if (_fluxRawNv12) {
     sl::RawBuffer raw;
-    if (_zed->retrieveImage(raw) != sl::ERROR_CODE::SUCCESS || !raw.isValid()) {
+    if (_zed->retrieveImage(raw) != sl::ERROR_CODE::SUCCESS) {
       return;
     }
-    if (!fluxCopyRawNv12(raw.getRawBuffer(), data.data(), w, h)) {
-      RCLCPP_ERROR_ONCE(get_logger(), "flux: raw NV12 buffer unusable; flux disabled");
-      _fluxEnabled = false;
+    if (!copyRawNv12(raw.getRawBuffer(), data.data())) {
       return;
     }
   } else {
-    // A Mat over the slot bytes: the SDK writes the retrieved image there directly. It only
-    // stays in place when size and type match, which the check below guards.
+    sl::VIEW view = _fluxRectified ?
+      (_24bitMode ? sl::VIEW::LEFT_BGR : sl::VIEW::LEFT_BGRA) :
+      (_24bitMode ? sl::VIEW::LEFT_UNRECTIFIED_BGR : sl::VIEW::LEFT_UNRECTIFIED_BGRA);
     sl::Mat dst(
-      _matResol, bgr ? sl::MAT_TYPE::U8_C3 : sl::MAT_TYPE::U8_C4,
+      _matResol, _24bitMode ? sl::MAT_TYPE::U8_C3 : sl::MAT_TYPE::U8_C4,
       reinterpret_cast<sl::uchar1 *>(data.data()), w * c, sl::MEM::CPU);
     if (_zed->retrieveImage(dst, view, sl::MEM::CPU, _matResol) != sl::ERROR_CODE::SUCCESS) {
       return;
     }
-    if (dst.getPtr<sl::uchar1>(sl::MEM::CPU) != reinterpret_cast<sl::uchar1 *>(data.data())) {
-      RCLCPP_ERROR_ONCE(
-        get_logger(), "flux: SDK reallocated the retrieve buffer; flux disabled");
-      _fluxEnabled = false;
-      return;
-    }
   }
 
-  rclcpp::Time t;
-  if (_usePubTimestamps) {
-    t = get_clock()->now();
-  } else if (_svoMode) {
-    t = _frameTimestamp;
-  } else {
-    t = sl_tools::slTime2Ros(_sdkGrabTS, get_clock()->get_clock_type());
-  }
-  const std::int64_t ns = t.nanoseconds();
+  auto ts = _usePubTimestamps ? get_clock()->now() : timeStamp;
+  const std::int64_t ns = ts.nanoseconds();
   b.set__header__stamp(
     static_cast<std::int32_t>(ns / 1000000000LL), static_cast<std::uint32_t>(ns % 1000000000LL));
   b.set__header__frame_id(_camOptFrameId);
   b.set__height(h);
   b.set__width(w);
-  b.set__encoding(_fluxRawNv12 ? "nv12" : (bgr ? "bgr8" : "bgra8"));
+  b.set__encoding(encoding);
   b.set__is_bigendian(0);
   b.set__step(w * c);
   b.commit__();
+  DEBUG_STREAM_VD("flux image " << w << "x" << h << " " << encoding << " published");
 }
 
-bool ZedCameraOne::fluxCopyRawNv12(
-  void * raw_surface, std::uint8_t * dst, std::uint32_t w, std::uint32_t h)
+bool ZedCameraOne::copyRawNv12(void * raw_surface, std::uint8_t * dst)
 {
   auto * surf = static_cast<NvBufSurface *>(raw_surface);
-  if (surf == nullptr || surf->batchSize < 1) {
-    return false;
-  }
   NvBufSurfaceParams & s = surf->surfaceList[0];
-  if (s.colorFormat != NVBUF_COLOR_FORMAT_NV12 || s.planeParams.num_planes != 2 ||
-    s.width != w || s.height != h)
-  {
+  const std::uint32_t w = _matResol.width;
+  const std::uint32_t h = _matResol.height;
+  if (s.width != w || s.height != h) {
+    RCLCPP_ERROR_STREAM_ONCE(
+      get_logger(), "flux: raw NV12 buffer is " << s.width << "x" << s.height
+                                                 << ", flux.raw_nv12 requires pub_resolution NATIVE");
     return false;
   }
-  // The SDK pools these surfaces and forbids unmapping them, so each one is mapped the first
-  // time it comes round and the mapping is kept.
-  if (s.mappedAddr.addr[0] == nullptr && _fluxMappedSurfaces.insert(surf).second) {
-    for (unsigned pl = 0; pl < 2; ++pl) {
-      if (NvBufSurfaceMap(surf, 0, static_cast<int>(pl), NVBUF_MAP_READ) != 0) {
+  // The SDK pools these surfaces and forbids unmapping them, so a surface stays mapped.
+  if (s.mappedAddr.addr[0] == nullptr) {
+    for (int pl = 0; pl < 2; ++pl) {
+      if (NvBufSurfaceMap(surf, 0, pl, NVBUF_MAP_READ) != 0) {
         return false;
       }
     }
   }
-  if (s.mappedAddr.addr[0] == nullptr || s.mappedAddr.addr[1] == nullptr) {
-    return false;
+  for (int pl = 0; pl < 2; ++pl) {
+    NvBufSurfaceSyncForCpu(surf, 0, pl);
   }
-  for (unsigned pl = 0; pl < 2; ++pl) {
-    NvBufSurfaceSyncForCpu(surf, 0, static_cast<int>(pl));
-  }
-  // Rows are tightly packed in the slot (step == width); the capture buffer has its own pitch.
-  const auto * y = static_cast<const std::uint8_t *>(s.mappedAddr.addr[0]);
-  const auto * uv = static_cast<const std::uint8_t *>(s.mappedAddr.addr[1]);
-  const std::uint32_t y_pitch = s.planeParams.pitch[0];
-  const std::uint32_t uv_pitch = s.planeParams.pitch[1];
-  if (y_pitch == w) {
-    std::memcpy(dst, y, static_cast<std::size_t>(w) * h);
-  } else {
-    for (std::uint32_t r = 0; r < h; ++r) {
-      std::memcpy(dst + static_cast<std::size_t>(r) * w, y + static_cast<std::size_t>(r) * y_pitch, w);
-    }
-  }
-  std::uint8_t * dst_uv = dst + static_cast<std::size_t>(w) * h;
-  const std::uint32_t uv_rows = h / 2;
-  if (uv_pitch == w) {
-    std::memcpy(dst_uv, uv, static_cast<std::size_t>(w) * uv_rows);
-  } else {
-    for (std::uint32_t r = 0; r < uv_rows; ++r) {
-      std::memcpy(dst_uv + static_cast<std::size_t>(r) * w, uv + static_cast<std::size_t>(r) * uv_pitch, w);
-    }
-  }
+  auto copy_plane = [w](std::uint8_t * out, const void * in, std::uint32_t pitch, std::uint32_t rows) {
+      const auto * src = static_cast<const std::uint8_t *>(in);
+      for (std::uint32_t r = 0; r < rows; ++r) {
+        std::memcpy(out + static_cast<std::size_t>(r) * w, src + static_cast<std::size_t>(r) * pitch, w);
+      }
+    };
+  copy_plane(dst, s.mappedAddr.addr[0], s.planeParams.pitch[0], h);
+  copy_plane(dst + static_cast<std::size_t>(w) * h, s.mappedAddr.addr[1], s.planeParams.pitch[1], h / 2);
   return true;
 }
 
 void ZedCameraOne::handleImageRetrievalAndPublishing()
 {
-  if (_fluxEnabled && _fluxPub) {
-    publishFluxColorImage();
-  }
-
-  _imageSubscribed = areImageTopicsSubscribed();
+  _imageSubscribed = areImageTopicsSubscribed() || _fluxPub != nullptr;
   if (_imageSubscribed) {
     DEBUG_STREAM_VD("Retrieving video data");
 
@@ -718,7 +650,7 @@ void ZedCameraOne::retrieveImages(bool gpu)
 
   // ----> Retrieve all required data
   DEBUG_VD("Retrieving Image Data");
-  if (_colorSubCount > 0) {
+  if (_colorSubCount > 0 && !_fluxPub) {
     retrieved |=
       (sl::ERROR_CODE::SUCCESS ==
       _zed->retrieveImage(
@@ -734,7 +666,7 @@ void ZedCameraOne::retrieveImages(bool gpu)
         _sdkGrabTS.getNanoseconds() <<
         " nsec");
   }
-  if (_colorRawSubCount > 0) {
+  if (_colorRawSubCount > 0 && !_fluxPub) {
     retrieved |= (sl::ERROR_CODE::SUCCESS ==
       _zed->retrieveImage(
         _matColorRaw,
@@ -749,7 +681,7 @@ void ZedCameraOne::retrieveImages(bool gpu)
         " retrieved - timestamp: " << _sdkGrabTS.getNanoseconds() <<
         " nsec");
   }
-  if (_graySubCount > 0) {
+  if (_graySubCount > 0 && !_fluxPub) {
     retrieved |= (sl::ERROR_CODE::SUCCESS ==
       _zed->retrieveImage(
         _matGray, sl::VIEW::LEFT_GRAY,
@@ -759,7 +691,7 @@ void ZedCameraOne::retrieveImages(bool gpu)
         _sdkGrabTS.getNanoseconds() <<
         " nsec");
   }
-  if (_grayRawSubCount > 0) {
+  if (_grayRawSubCount > 0 && !_fluxPub) {
     retrieved |=
       (sl::ERROR_CODE::SUCCESS ==
       _zed->retrieveImage(
@@ -813,6 +745,9 @@ void ZedCameraOne::publishImages()
     timeStamp = sl_tools::slTime2Ros(_sdkGrabTS, get_clock()->get_clock_type());
   }
 
+  if (_fluxPub) {
+    publishFluxImage(timeStamp);
+  }
   publishColorImage(timeStamp);
   publishColorRawImage(timeStamp);
   publishGrayImage(timeStamp);
@@ -836,7 +771,7 @@ void ZedCameraOne::publishImages()
 
 void ZedCameraOne::publishColorImage(const rclcpp::Time & timeStamp)
 {
-  if (_colorSubCount > 0) {
+  if (_colorSubCount > 0 && !_fluxPub) {
     DEBUG_STREAM_VD("_colorSubCount: " << _colorSubCount);
     if (_nitrosDisabled) {
       publishImageWithInfo(
@@ -857,7 +792,7 @@ void ZedCameraOne::publishColorImage(const rclcpp::Time & timeStamp)
 
 void ZedCameraOne::publishColorRawImage(const rclcpp::Time & timeStamp)
 {
-  if (_colorRawSubCount > 0) {
+  if (_colorRawSubCount > 0 && !_fluxPub) {
     DEBUG_STREAM_VD("_colorRawSubCount: " << _colorRawSubCount);
     if (_nitrosDisabled) {
       publishImageWithInfo(
@@ -878,7 +813,7 @@ void ZedCameraOne::publishColorRawImage(const rclcpp::Time & timeStamp)
 
 void ZedCameraOne::publishGrayImage(const rclcpp::Time & timeStamp)
 {
-  if (_graySubCount > 0) {
+  if (_graySubCount > 0 && !_fluxPub) {
     DEBUG_STREAM_VD("_graySubCount: " << _graySubCount);
     if (_nitrosDisabled) {
       publishImageWithInfo(
@@ -899,7 +834,7 @@ void ZedCameraOne::publishGrayImage(const rclcpp::Time & timeStamp)
 
 void ZedCameraOne::publishGrayRawImage(const rclcpp::Time & timeStamp)
 {
-  if (_grayRawSubCount > 0) {
+  if (_grayRawSubCount > 0 && !_fluxPub) {
     DEBUG_STREAM_VD("_grayRawSubCount: " << _grayRawSubCount);
     if (_nitrosDisabled) {
       publishImageWithInfo(

@@ -84,20 +84,17 @@ endif()
 # Dependencies
 find_package(nlohmann_json REQUIRED)
 
-# flux: shared-memory publish of the color image next to the DDS topic (opt-in per node with
-# the `flux.enable` parameter). The sensor_msgs/Image adapter is generated here from the
-# installed .msg so this node and every flux consumer share one fingerprint.
+# flux shared-memory publisher (zed_camera_one, `flux.enable` parameter)
 find_package(flux_cpp REQUIRED)
 find_package(flux_gen REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(FLUX_ADAPTERS "${CMAKE_CURRENT_BINARY_DIR}/flux_adapters")
-file(GLOB _flux_gen_sources CONFIGURE_DEPENDS "${FLUX_GEN_PYTHON_DIR}/flux_gen/*.py")
 add_custom_command(
   OUTPUT "${FLUX_ADAPTERS}/sensor_msgs/flux/image.hpp"
   COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${FLUX_GEN_PYTHON_DIR}:$ENV{PYTHONPATH}"
           ${Python3_EXECUTABLE} -m flux_gen --pkg sensor_msgs
           --msg "${sensor_msgs_DIR}/../msg/Image.msg" --out-cpp "${FLUX_ADAPTERS}"
-  DEPENDS "${sensor_msgs_DIR}/../msg/Image.msg" ${_flux_gen_sources}
+  DEPENDS "${sensor_msgs_DIR}/../msg/Image.msg"
   COMMENT "flux_gen: sensor_msgs/Image adapter"
   VERBATIM)
 
@@ -359,6 +356,7 @@ add_library(zed_camera_one_component SHARED
     ${ZED_CAMERA_ONE_SRC}
     "${FLUX_ADAPTERS}/sensor_msgs/flux/image.hpp"
 )
+target_compile_definitions(zed_camera_one_component PRIVATE SL_ENABLE_ADVANCED_CAPTURE_API)
 target_include_directories(zed_camera_one_component PRIVATE "${FLUX_ADAPTERS}"
     /usr/src/jetson_multimedia_api/include)
 target_link_directories(zed_camera_one_component PRIVATE /usr/lib/aarch64-linux-gnu/nvidia)

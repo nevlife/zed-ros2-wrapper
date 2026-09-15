@@ -66,9 +66,9 @@
             target_framerate: 0 # Framerate for the streaming output. This framerate must be below or equal to the camera framerate. Allowed framerates are 15, 30, 60 or 100 if possible. Any other values will be discarded and camera FPS will be taken.
             
         flux:
-            enable: false # Publish the color image on a flux shared-memory channel (same topic name) next to the DDS topic
-            rectified: true # false publishes the unrectified image on the flux channel and skips the GPU rectification pass
-            raw_nv12: false # true publishes the ISP capture buffer as unrectified NV12 (1.5 B/px, no CUDA pass, encoding "nv12"); Jetson GMSL only
+            enable: false # Publish the color image on a flux shared-memory channel (rgb/color/rect/image when rectified, rgb/color/raw/image otherwise) and stop publishing images on DDS; camera_info stays on DDS
+            rectified: true # false publishes the unrectified image and skips the GPU rectification pass
+            raw_nv12: false # true publishes the ISP capture buffer as unrectified NV12 (encoding "nv12", no CUDA pass); Jetson GMSL only
             slot_count: 8 # Ring depth of the flux channel: frames retained for subscribers, and the bound on concurrent borrows
         advanced: # WARNING: do not modify unless you are confident of what you are doing
             # Reference documentation: https://man7.org/linux/man-pages/man7/sched.7.html
