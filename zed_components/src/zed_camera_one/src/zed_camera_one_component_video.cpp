@@ -535,7 +535,7 @@ void ZedCameraOne::initFluxPublisher()
   _fluxPub = std::make_unique<flux::ros::Publisher>(
     *this, topic, Image::kFingerprint, slot, static_cast<std::uint32_t>(_fluxSlotCount));
   RCLCPP_INFO_STREAM(
-    get_logger(), " * flux channel: " << topic << " -> " << _fluxPub->segment_name());
+    get_logger(), " * flux channel: " << topic << " -> " << _fluxPub->signpost_name());
 }
 
 void ZedCameraOne::publishFluxImage(const rclcpp::Time & timeStamp)

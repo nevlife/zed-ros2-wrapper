@@ -1539,7 +1539,7 @@ void ZedCamera::initFluxPublishers()
       auto pub = std::make_unique<flux::ros::Publisher>(
         *this, topic, Image::kFingerprint, slot, count);
       RCLCPP_INFO_STREAM(
-        get_logger(), " * flux channel: " << topic << " -> " << pub->segment_name());
+        get_logger(), " * flux channel: " << topic << " -> " << pub->signpost_name());
       return pub;
     };
   const std::size_t color_bytes = w * h * (m24bitMode ? 3 : 4);
