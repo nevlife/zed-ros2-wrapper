@@ -512,6 +512,13 @@ void ZedCameraOne::getResolutionParams()
   } else {
     _customDownscaleFactor = 1.0;
   }
+
+  sl_tools::getParam(
+    shared_from_this(), "general.raw_nv12", _rawNv12, _rawNv12,
+    " * Publish the NV12 capture buffer: ");
+  sl_tools::getParam(
+    shared_from_this(), "general.pub_throttle", _pubThrottle, _pubThrottle,
+    " * Throttle publishing to the grab rate: ");
 }
 
 void ZedCameraOne::getOpencvCalibrationParam()

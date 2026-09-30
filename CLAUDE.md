@@ -14,8 +14,9 @@ Fork of stereolabs/zed-ros2-wrapper (upstream base v5.4.1) with a flux publisher
 
 - Both components publish on flux. ZED One (`zed_camera_one`, `common_mono.yaml`): the color image on one channel. Stereo (`zed_camera`, `common_stereo.yaml`): left, right and depth on three channels.
 - `flux.enable true` publishes on flux and stops the DDS topics that carry the same images. `camera_info` stays on DDS. With `flux.enable false` nothing is published on flux.
-- Channel names are the DDS topic names: `rgb/color/rect/image` (ZED One), `left/color/rect/image`, `right/color/rect/image`, `depth/depth_registered` (stereo). `flux.rectified false` switches the color channels to `raw/image`; `flux.raw_nv12` (ZED One) publishes the NV12 capture buffer on `rgb/color/raw/image`.
-- `flux.raw_nv12` needs `general.pub_resolution: NATIVE`.
+- Channel names are the DDS topic names: `rgb/color/rect/image` (ZED One), `left/color/rect/image`, `right/color/rect/image`, `depth/depth_registered` (stereo). `flux.rectified false` switches the color channels to `raw/image`.
+- `general.raw_nv12` (ZED One) publishes the NV12 capture buffer on `rgb/color/raw/image`: on flux with `flux.enable true`, otherwise on DDS (needs `video.publish_raw true`). It needs `general.pub_resolution: NATIVE`.
+- `general.pub_throttle false` drops the sleep upstream puts after each publish (ZED One). The sleep holds a frame the SDK already has until the loop's own period ends, which adds latency and spreads the arrival of hardware-synced cameras.
 - The stereo flux publish runs in the grab thread inside `retrieveVideoDepth()`, the same place upstream retrieves the DDS images. Depth is `32FC1` in meters; `depth.openni_depth_mode` does not apply to flux.
 - ZED X One GS cameras must be opened staggered (`multi_camera.yaml` `stagger`), otherwise `CAMERA STREAM FAILED TO START`.
 - The stereo component starts positional tracking in the grab loop and blocks until the static TF from `robot_state_publisher` arrives, so a stereo launch must keep `publish_urdf` true.

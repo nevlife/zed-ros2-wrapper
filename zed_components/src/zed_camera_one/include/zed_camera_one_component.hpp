@@ -119,6 +119,7 @@ protected:
   bool copyRawNv12(void * raw_surface, std::uint8_t * dst);
   void publishColorImage(const rclcpp::Time & timeStamp);
   void publishColorRawImage(const rclcpp::Time & timeStamp);
+  void publishRawNv12Image(const rclcpp::Time & timeStamp);
   void publishGrayImage(const rclcpp::Time & timeStamp);
   void publishGrayRawImage(const rclcpp::Time & timeStamp);
   void publishCameraInfos();  // Used to publish camera infos when no video/depth is subscribed
@@ -373,7 +374,6 @@ private:
 
   bool _fluxEnabled = false;
   bool _fluxRectified = true;
-  bool _fluxRawNv12 = false;
   int _fluxSlotCount = 8;
   std::unique_ptr<flux::ros::Publisher> _fluxPub;
   // <---- Publisher variables
@@ -406,6 +406,8 @@ private:
 #endif
   bool _publishImgRgb = true;
   bool _publishImgRaw = false;
+  bool _rawNv12 = false;
+  bool _pubThrottle = true;
   bool _publishImgGray = false;
   bool _publishSensImu = true;
   bool _publishSensImuRaw = false;
