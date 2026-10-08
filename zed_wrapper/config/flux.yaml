@@ -7,4 +7,5 @@
             raw_nv12: false
         flux:
             enable: true
+            backend: "flux"
             slot_count: 8

@@ -24,6 +24,21 @@
 #include <nvbufsurface.h>
 
 #include "sensor_msgs/flux/image.hpp"
+#include "sensor_msgs/flux2/image.hpp"
+#ifdef ZED_WITH_ICEORYX2
+#include "iox2/iceoryx2.hpp"
+
+// The frame's metadata beside an iceoryx2 byte slice; zed_fanout_bench declares the same struct.
+struct ZedFrameHeader
+{
+  static constexpr const char * IOX2_TYPE_NAME = "ZedFrameHeader";
+  std::int64_t stamp_ns;
+  std::uint32_t width;
+  std::uint32_t height;
+  std::uint32_t step;
+  char encoding[12];
+};
+#endif
 
 namespace
 {
@@ -33,6 +48,18 @@ std::mutex g_it_pub_init_mutex;
 
 namespace stereolabs
 {
+
+#ifdef ZED_WITH_ICEORYX2
+struct ZedCameraOne::Iox2Pub
+{
+  static constexpr iox2::ServiceType Ipc = iox2::ServiceType::Ipc;
+  iox2::Node<Ipc> node;
+  iox2::PortFactoryPublishSubscribe<Ipc, iox2::bb::Slice<std::uint8_t>, ZedFrameHeader> service;
+  iox2::Publisher<Ipc, iox2::bb::Slice<std::uint8_t>, ZedFrameHeader> publisher;
+  iox2::PortFactoryEvent<Ipc> event;
+  iox2::Notifier<Ipc> notifier;
+};
+#endif
 
 void ZedCameraOne::getVideoParams()
 {
@@ -510,6 +537,21 @@ void ZedCameraOne::getFluxParams()
     shared_from_this(), "flux.enable", _fluxEnabled, _fluxEnabled,
     " * flux color image channel: ");
   sl_tools::getParam(
+    shared_from_this(), "flux.backend", _fluxBackend, _fluxBackend,
+    " * flux backend: ");
+  bool known = _fluxBackend == "flux" || _fluxBackend == "flux2";
+#ifdef ZED_WITH_AGNOCAST
+  known = known || _fluxBackend == "agnocast";
+#endif
+#ifdef ZED_WITH_ICEORYX2
+  known = known || _fluxBackend == "iceoryx2";
+#endif
+  if (!known) {
+    RCLCPP_WARN_STREAM(
+      get_logger(), "'flux.backend' '" << _fluxBackend << "' is not available: using 'flux'");
+    _fluxBackend = "flux";
+  }
+  sl_tools::getParam(
     shared_from_this(), "flux.rectified", _fluxRectified, _fluxRectified,
     " * flux image rectified: ");
   sl_tools::getParam(
@@ -519,7 +561,6 @@ void ZedCameraOne::getFluxParams()
 
 void ZedCameraOne::initFluxPublisher()
 {
-  using Image = sensor_msgs::flux_msg::Image;
   if (!_fluxEnabled) {
     return;
   }
@@ -528,18 +569,57 @@ void ZedCameraOne::initFluxPublisher()
   const std::size_t w = _matResol.width;
   const std::size_t h = _matResol.height;
   const std::size_t frame_bytes = _rawNv12 ? w * h * 3 / 2 : w * h * (_24bitMode ? 3 : 4);
+  const std::uint32_t count = static_cast<std::uint32_t>(_fluxSlotCount);
+#ifdef ZED_WITH_AGNOCAST
+  if (_fluxBackend == "agnocast") {
+    _agnoPub = agnocast::create_publisher<sensor_msgs::msg::Image>(
+      this, topic, rclcpp::QoS(rclcpp::KeepLast(count)).best_effort());
+    RCLCPP_INFO_STREAM(get_logger(), " * agnocast topic: " << topic);
+    return;
+  }
+#endif
+#ifdef ZED_WITH_ICEORYX2
+  if (_fluxBackend == "iceoryx2") {
+    constexpr iox2::ServiceType Ipc = iox2::ServiceType::Ipc;
+    auto node = iox2::NodeBuilder().create<Ipc>().value();
+    auto name = iox2::ServiceName::create(topic.c_str()).value();
+    // zed_fanout_bench opens the service with the same settings.
+    auto service = node.service_builder(name)
+      .publish_subscribe<iox2::bb::Slice<std::uint8_t>>()
+      .user_header<ZedFrameHeader>()
+      .max_subscribers(8)
+      .subscriber_max_buffer_size(2)
+      .history_size(0)
+      .open_or_create().value();
+    auto publisher = service.publisher_builder().initial_max_slice_len(frame_bytes).create().value();
+    auto event = node.service_builder(name).event().open_or_create().value();
+    auto notifier = event.notifier_builder().create().value();
+    _iox2Pub = std::make_shared<Iox2Pub>(
+      Iox2Pub{std::move(node), std::move(service), std::move(publisher), std::move(event),
+        std::move(notifier)});
+    RCLCPP_INFO_STREAM(get_logger(), " * iceoryx2 service: " << topic);
+    return;
+  }
+#endif
+  if (_fluxBackend == "flux2") {
+    using Image = sensor_msgs::flux2_msg::Image;
+    const std::uint32_t slot = static_cast<std::uint32_t>(frame_bytes + Image::kScalarBytes + 256);
+    _flux2Pub = std::make_unique<flux2::Publisher>(*this, topic, Image::kFingerprint, slot, count);
+    RCLCPP_INFO_STREAM(
+      get_logger(), " * flux2 channel: " << topic << " -> " << _flux2Pub->signpost_name());
+    return;
+  }
+  using Image = sensor_msgs::flux_msg::Image;
   const std::uint32_t slot = static_cast<std::uint32_t>(frame_bytes + Image::kScalarBytes + 256);
-  _fluxPub = std::make_unique<flux::ros::Publisher>(
-    *this, topic, Image::kFingerprint, slot, static_cast<std::uint32_t>(_fluxSlotCount));
+  _fluxPub = std::make_unique<flux::ros::Publisher>(*this, topic, Image::kFingerprint, slot, count);
   RCLCPP_INFO_STREAM(
     get_logger(), " * flux channel: " << topic << " -> " << _fluxPub->signpost_name());
 }
 
-void ZedCameraOne::publishFluxImage(const rclcpp::Time & timeStamp)
+template<class Image, class Pub>
+void ZedCameraOne::publishFluxImage(Pub & pub, const rclcpp::Time & timeStamp)
 {
-  using Image = sensor_msgs::flux_msg::Image;
-
-  Image::Builder b = Image::build__(*_fluxPub);
+  typename Image::Builder b = Image::build__(pub);
   if (!b) {
     DEBUG_VD("flux: every slot borrowed, frame dropped");
     return;
@@ -548,26 +628,9 @@ void ZedCameraOne::publishFluxImage(const rclcpp::Time & timeStamp)
   const std::uint32_t h = _matResol.height;
   const std::uint32_t c = _rawNv12 ? 1u : (_24bitMode ? 3u : 4u);
   const char * encoding = _rawNv12 ? "nv12" : (_24bitMode ? "bgr8" : "bgra8");
-  flux::wire::Span<std::uint8_t> data = b.alloc__data(_rawNv12 ? w * h * 3 / 2 : w * h * c);
-
-  if (_rawNv12) {
-    sl::RawBuffer raw;
-    if (_zed->retrieveImage(raw) != sl::ERROR_CODE::SUCCESS) {
-      return;
-    }
-    if (!copyRawNv12(raw.getRawBuffer(), data.data())) {
-      return;
-    }
-  } else {
-    sl::VIEW view = _fluxRectified ?
-      (_24bitMode ? sl::VIEW::LEFT_BGR : sl::VIEW::LEFT_BGRA) :
-      (_24bitMode ? sl::VIEW::LEFT_UNRECTIFIED_BGR : sl::VIEW::LEFT_UNRECTIFIED_BGRA);
-    sl::Mat dst(
-      _matResol, _24bitMode ? sl::MAT_TYPE::U8_C3 : sl::MAT_TYPE::U8_C4,
-      reinterpret_cast<sl::uchar1 *>(data.data()), w * c, sl::MEM::CPU);
-    if (_zed->retrieveImage(dst, view, sl::MEM::CPU, _matResol) != sl::ERROR_CODE::SUCCESS) {
-      return;
-    }
+  auto data = b.alloc__data(_rawNv12 ? w * h * 3 / 2 : w * h * c);
+  if (!retrieveFluxFrame(data.data())) {
+    return;
   }
 
   auto ts = _usePubTimestamps ? get_clock()->now() : timeStamp;
@@ -583,6 +646,85 @@ void ZedCameraOne::publishFluxImage(const rclcpp::Time & timeStamp)
   b.commit__();
   DEBUG_STREAM_VD("flux image " << w << "x" << h << " " << encoding << " published");
 }
+
+bool ZedCameraOne::retrieveFluxFrame(std::uint8_t * dst)
+{
+  if (_rawNv12) {
+    sl::RawBuffer raw;
+    return _zed->retrieveImage(raw) == sl::ERROR_CODE::SUCCESS &&
+           copyRawNv12(raw.getRawBuffer(), dst);
+  }
+  const std::uint32_t c = _24bitMode ? 3u : 4u;
+  sl::VIEW view = _fluxRectified ?
+    (_24bitMode ? sl::VIEW::LEFT_BGR : sl::VIEW::LEFT_BGRA) :
+    (_24bitMode ? sl::VIEW::LEFT_UNRECTIFIED_BGR : sl::VIEW::LEFT_UNRECTIFIED_BGRA);
+  sl::Mat mat(
+    _matResol, _24bitMode ? sl::MAT_TYPE::U8_C3 : sl::MAT_TYPE::U8_C4,
+    reinterpret_cast<sl::uchar1 *>(dst), _matResol.width * c, sl::MEM::CPU);
+  return _zed->retrieveImage(mat, view, sl::MEM::CPU, _matResol) == sl::ERROR_CODE::SUCCESS;
+}
+
+bool ZedCameraOne::fluxActive() const
+{
+  bool active = _fluxPub || _flux2Pub;
+#ifdef ZED_WITH_AGNOCAST
+  active = active || _agnoPub;
+#endif
+#ifdef ZED_WITH_ICEORYX2
+  active = active || _iox2Pub;
+#endif
+  return active;
+}
+
+#ifdef ZED_WITH_AGNOCAST
+void ZedCameraOne::publishAgnocastImage(const rclcpp::Time & timeStamp)
+{
+  const std::uint32_t w = _matResol.width;
+  const std::uint32_t h = _matResol.height;
+  const std::uint32_t c = _rawNv12 ? 1u : (_24bitMode ? 3u : 4u);
+  auto msg = _agnoPub->borrow_loaned_message();
+  msg->data.resize(_rawNv12 ? w * h * 3 / 2 : w * h * c);
+  if (!retrieveFluxFrame(msg->data.data())) {
+    return;
+  }
+  msg->header.stamp = _usePubTimestamps ? get_clock()->now() : timeStamp;
+  msg->header.frame_id = _camOptFrameId;
+  msg->height = h;
+  msg->width = w;
+  msg->encoding = _rawNv12 ? "nv12" : (_24bitMode ? "bgr8" : "bgra8");
+  msg->is_bigendian = 0;
+  msg->step = w * c;
+  _agnoPub->publish(std::move(msg));
+}
+#endif
+
+#ifdef ZED_WITH_ICEORYX2
+void ZedCameraOne::publishIox2Image(const rclcpp::Time & timeStamp)
+{
+  const std::uint32_t w = _matResol.width;
+  const std::uint32_t h = _matResol.height;
+  const std::uint32_t c = _rawNv12 ? 1u : (_24bitMode ? 3u : 4u);
+  auto loan = _iox2Pub->publisher.loan_slice_uninit(_rawNv12 ? w * h * 3 / 2 : w * h * c);
+  if (!loan.has_value()) {
+    DEBUG_VD("iceoryx2: no sample to loan, frame dropped");
+    return;
+  }
+  auto sample = std::move(loan.value());
+  if (!retrieveFluxFrame(sample.payload_mut().data())) {
+    return;
+  }
+  ZedFrameHeader & hdr = sample.user_header_mut();
+  hdr.stamp_ns = (_usePubTimestamps ? get_clock()->now() : timeStamp).nanoseconds();
+  hdr.width = w;
+  hdr.height = h;
+  hdr.step = w * c;
+  std::snprintf(
+    hdr.encoding, sizeof(hdr.encoding), "%s", _rawNv12 ? "nv12" : (_24bitMode ? "bgr8" : "bgra8"));
+  if (iox2::send(iox2::assume_init(std::move(sample))).has_value()) {
+    _iox2Pub->notifier.notify().value();
+  }
+}
+#endif
 
 bool ZedCameraOne::copyRawNv12(void * raw_surface, std::uint8_t * dst)
 {
@@ -648,7 +790,7 @@ void ZedCameraOne::publishRawNv12Image(const rclcpp::Time & timeStamp)
 
 void ZedCameraOne::handleImageRetrievalAndPublishing()
 {
-  _imageSubscribed = areImageTopicsSubscribed() || _fluxPub != nullptr;
+  _imageSubscribed = areImageTopicsSubscribed() || fluxActive();
   if (_imageSubscribed) {
     DEBUG_STREAM_VD("Retrieving video data");
 
@@ -675,7 +817,7 @@ void ZedCameraOne::retrieveImages(bool gpu)
 
   // ----> Retrieve all required data
   DEBUG_VD("Retrieving Image Data");
-  if (_colorSubCount > 0 && !_fluxPub) {
+  if (_colorSubCount > 0 && !fluxActive()) {
     retrieved |=
       (sl::ERROR_CODE::SUCCESS ==
       _zed->retrieveImage(
@@ -691,7 +833,7 @@ void ZedCameraOne::retrieveImages(bool gpu)
         _sdkGrabTS.getNanoseconds() <<
         " nsec");
   }
-  if (_colorRawSubCount > 0 && !_fluxPub && !_rawNv12) {
+  if (_colorRawSubCount > 0 && !fluxActive() && !_rawNv12) {
     retrieved |= (sl::ERROR_CODE::SUCCESS ==
       _zed->retrieveImage(
         _matColorRaw,
@@ -706,7 +848,7 @@ void ZedCameraOne::retrieveImages(bool gpu)
         " retrieved - timestamp: " << _sdkGrabTS.getNanoseconds() <<
         " nsec");
   }
-  if (_graySubCount > 0 && !_fluxPub) {
+  if (_graySubCount > 0 && !fluxActive()) {
     retrieved |= (sl::ERROR_CODE::SUCCESS ==
       _zed->retrieveImage(
         _matGray, sl::VIEW::LEFT_GRAY,
@@ -716,7 +858,7 @@ void ZedCameraOne::retrieveImages(bool gpu)
         _sdkGrabTS.getNanoseconds() <<
         " nsec");
   }
-  if (_grayRawSubCount > 0 && !_fluxPub) {
+  if (_grayRawSubCount > 0 && !fluxActive()) {
     retrieved |=
       (sl::ERROR_CODE::SUCCESS ==
       _zed->retrieveImage(
@@ -771,7 +913,17 @@ void ZedCameraOne::publishImages()
   }
 
   if (_fluxPub) {
-    publishFluxImage(timeStamp);
+    publishFluxImage<sensor_msgs::flux_msg::Image>(*_fluxPub, timeStamp);
+  } else if (_flux2Pub) {
+    publishFluxImage<sensor_msgs::flux2_msg::Image>(*_flux2Pub, timeStamp);
+#ifdef ZED_WITH_AGNOCAST
+  } else if (_agnoPub) {
+    publishAgnocastImage(timeStamp);
+#endif
+#ifdef ZED_WITH_ICEORYX2
+  } else if (_iox2Pub) {
+    publishIox2Image(timeStamp);
+#endif
   } else if (_rawNv12) {
     publishRawNv12Image(timeStamp);
   }
@@ -798,7 +950,7 @@ void ZedCameraOne::publishImages()
 
 void ZedCameraOne::publishColorImage(const rclcpp::Time & timeStamp)
 {
-  if (_colorSubCount > 0 && !_fluxPub) {
+  if (_colorSubCount > 0 && !fluxActive()) {
     DEBUG_STREAM_VD("_colorSubCount: " << _colorSubCount);
     if (_nitrosDisabled) {
       publishImageWithInfo(
@@ -819,7 +971,7 @@ void ZedCameraOne::publishColorImage(const rclcpp::Time & timeStamp)
 
 void ZedCameraOne::publishColorRawImage(const rclcpp::Time & timeStamp)
 {
-  if (_colorRawSubCount > 0 && !_fluxPub && !_rawNv12) {
+  if (_colorRawSubCount > 0 && !fluxActive() && !_rawNv12) {
     DEBUG_STREAM_VD("_colorRawSubCount: " << _colorRawSubCount);
     if (_nitrosDisabled) {
       publishImageWithInfo(
@@ -840,7 +992,7 @@ void ZedCameraOne::publishColorRawImage(const rclcpp::Time & timeStamp)
 
 void ZedCameraOne::publishGrayImage(const rclcpp::Time & timeStamp)
 {
-  if (_graySubCount > 0 && !_fluxPub) {
+  if (_graySubCount > 0 && !fluxActive()) {
     DEBUG_STREAM_VD("_graySubCount: " << _graySubCount);
     if (_nitrosDisabled) {
       publishImageWithInfo(
@@ -861,7 +1013,7 @@ void ZedCameraOne::publishGrayImage(const rclcpp::Time & timeStamp)
 
 void ZedCameraOne::publishGrayRawImage(const rclcpp::Time & timeStamp)
 {
-  if (_grayRawSubCount > 0 && !_fluxPub) {
+  if (_grayRawSubCount > 0 && !fluxActive()) {
     DEBUG_STREAM_VD("_grayRawSubCount: " << _grayRawSubCount);
     if (_nitrosDisabled) {
       publishImageWithInfo(

@@ -84,8 +84,10 @@ endif()
 # Dependencies
 find_package(nlohmann_json REQUIRED)
 
-# flux shared-memory publisher (zed_camera and zed_camera_one, `flux.enable` parameter)
+# flux shared-memory publisher (zed_camera and zed_camera_one, `flux.enable` and `flux.backend`)
 find_package(flux_cpp REQUIRED)
+find_package(flux2_cpp REQUIRED)
+find_package(flux2_std_adapters REQUIRED)
 find_package(flux_gen REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(FLUX_ADAPTERS "${CMAKE_CURRENT_BINARY_DIR}/flux_adapters")
@@ -331,8 +333,9 @@ add_library(zed_camera_component SHARED
     ${ZED_CAMERA_SRC}
     "${FLUX_ADAPTERS}/sensor_msgs/flux/image.hpp"
 )
-target_include_directories(zed_camera_component PRIVATE "${FLUX_ADAPTERS}")
-target_link_libraries(zed_camera_component flux_cpp::flux_cpp)
+target_include_directories(zed_camera_component PRIVATE "${FLUX_ADAPTERS}"
+    ${flux2_std_adapters_INCLUDE_DIRS})
+target_link_libraries(zed_camera_component flux_cpp::flux_cpp flux2_cpp::flux2_cpp)
 target_include_directories(zed_camera_component PUBLIC
     ${CUDA_INCLUDE_DIRS}
     ${ZED_INCLUDE_DIRS}
@@ -361,9 +364,20 @@ add_library(zed_camera_one_component SHARED
 )
 target_compile_definitions(zed_camera_one_component PRIVATE SL_ENABLE_ADVANCED_CAPTURE_API)
 target_include_directories(zed_camera_one_component PRIVATE "${FLUX_ADAPTERS}"
-    /usr/src/jetson_multimedia_api/include)
+    ${flux2_std_adapters_INCLUDE_DIRS} /usr/src/jetson_multimedia_api/include)
 target_link_directories(zed_camera_one_component PRIVATE /usr/lib/aarch64-linux-gnu/nvidia)
-target_link_libraries(zed_camera_one_component flux_cpp::flux_cpp nvbufsurface)
+target_link_libraries(zed_camera_one_component flux_cpp::flux_cpp flux2_cpp::flux2_cpp nvbufsurface)
+# Benchmark-only backends of `flux.backend`, built where the libraries are found.
+find_package(agnocastlib QUIET)
+if(agnocastlib_FOUND)
+  target_compile_definitions(zed_camera_one_component PRIVATE ZED_WITH_AGNOCAST)
+  ament_target_dependencies(zed_camera_one_component agnocastlib)
+endif()
+find_package(iceoryx2-cxx QUIET)
+if(iceoryx2-cxx_FOUND)
+  target_compile_definitions(zed_camera_one_component PRIVATE ZED_WITH_ICEORYX2)
+  target_link_libraries(zed_camera_one_component iceoryx2-cxx::static-lib-cxx)
+endif()
 target_include_directories(zed_camera_one_component PUBLIC
     ${CUDA_INCLUDE_DIRS}
     ${ZED_INCLUDE_DIRS}

@@ -19,6 +19,8 @@
     <depend>zed_msgs</depend>
     <depend>flux_cpp</depend>
     <buildtool_depend>flux_gen</buildtool_depend>
+    <depend>flux2_cpp</depend>
+    <depend>flux2_std_adapters</depend>
     <depend>rclcpp</depend>
     <depend>rclcpp_components</depend>
     <depend>rcutils</depend>

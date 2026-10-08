@@ -68,6 +68,7 @@
             target_framerate: 0 # Framerate for the streaming output. This framerate must be below or equal to the camera framerate. Allowed framerates are 15, 30, 60 or 100 if possible. Any other values will be discarded and camera FPS will be taken.
             
         flux:
+            backend: 'flux' # 'flux' or 'flux2': the shared-memory library behind the channel
             enable: false # Publish the color image on a flux shared-memory channel (rgb/color/rect/image when rectified, rgb/color/raw/image otherwise) and stop publishing images on DDS; camera_info stays on DDS
             rectified: true # false publishes the unrectified image and skips the GPU rectification pass
             slot_count: 8 # Ring depth of the flux channel: frames retained for subscribers, and the bound on concurrent borrows
