@@ -18,6 +18,8 @@
 #include <rclcpp/time.hpp>
 #include <rclcpp/utilities.hpp>
 
+#include <csignal>
+
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 
 using namespace std::chrono_literals;
@@ -50,6 +52,10 @@ ZedCameraOne::ZedCameraOne(const rclcpp::NodeOptions & options)
   _setSvoFrameCheckTimer(get_clock())
 {
   _usingIPC = options.use_intra_process_comms();
+
+  // With the launch process gone, the next log line hits a closed pipe; the default SIGPIPE then
+  // kills the process with its Argus session open, and nvargus-daemon crashes cleaning it up.
+  std::signal(SIGPIPE, SIG_IGN);
 
   RCLCPP_INFO(get_logger(), "================================");
   RCLCPP_INFO(get_logger(), "    ZED Camera One Component    ");
