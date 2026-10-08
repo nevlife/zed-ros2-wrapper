@@ -24,10 +24,8 @@ from launch.actions import (
     OpaqueFunction,
     TimerAction
 )
-from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
 
 share_dir = get_package_share_directory('zed_wrapper')
 
@@ -36,6 +34,9 @@ default_cameras_path = os.path.join(share_dir, 'config', 'multi_camera.yaml')
 
 # Parameter override applied to every camera
 default_override_path = os.path.join(share_dir, 'config', 'flux.yaml')
+
+# Ahead of the param_overrides argument, which may replace them
+default_overrides = 'flux.backend:=flux2;flux.device:=cuda'
 
 
 def parse_array_param(param):
@@ -54,17 +55,9 @@ def launch_setup(context, *args, **kwargs):
         serials = [str(sn) for sn in cameras['serials']]
     # Opening the cameras at once fails with CAMERA STREAM FAILED TO START
     stagger = float(cameras['stagger'])
+    overrides = default_overrides + ';' + LaunchConfiguration('param_overrides').perform(context)
 
-    actions = [
-        Node(
-            package='rviz2',
-            executable='rviz2',
-            name='rviz2',
-            output='log',
-            arguments=['-d', os.path.join(share_dir, 'rviz', 'rviz_multi_camera.rviz')],
-            condition=IfCondition(LaunchConfiguration('rviz'))
-        )
-    ]
+    actions = []
     for i, sn in enumerate(serials):
         include = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(share_dir, 'launch', 'zed_camera.launch.py')),
@@ -74,7 +67,8 @@ def launch_setup(context, *args, **kwargs):
                 'serial_number': sn,
                 'ros_params_override_path': default_override_path,
                 'publish_urdf': 'false',
-                'publish_tf': 'false'
+                'publish_tf': 'false',
+                'param_overrides': overrides
             }.items()
         )
         actions.append(TimerAction(period=i * stagger, actions=[include]))
@@ -89,9 +83,10 @@ def generate_launch_description():
                 default_value='',
                 description='Serial numbers of the cameras to open. Default: the list in config/multi_camera.yaml'),
             DeclareLaunchArgument(
-                'rviz',
-                default_value='false',
-                description='Open RViz with one image display per camera'),
+                'param_overrides',
+                default_value='',
+                description='Passed to every camera after ' + default_overrides + ': '
+                            'semicolon-separated key:=value pairs, as zed_camera.launch.py takes them'),
             OpaqueFunction(function=launch_setup)
         ]
     )
