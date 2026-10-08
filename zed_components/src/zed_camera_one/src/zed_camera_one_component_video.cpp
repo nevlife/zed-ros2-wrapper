@@ -552,6 +552,8 @@ void ZedCameraOne::getFluxParams()
     _fluxBackend = "flux";
   }
   sl_tools::getParam(
+    shared_from_this(), "flux.device", _fluxDevice, _fluxDevice, " * flux device: ");
+  sl_tools::getParam(
     shared_from_this(), "flux.rectified", _fluxRectified, _fluxRectified,
     " * flux image rectified: ");
   sl_tools::getParam(
@@ -601,10 +603,19 @@ void ZedCameraOne::initFluxPublisher()
     return;
   }
 #endif
+  if (_fluxDevice == "cuda" && (_fluxBackend != "flux2" || _rawNv12)) {
+    RCLCPP_WARN(get_logger(), "'flux.device' 'cuda' needs backend 'flux2' and no raw_nv12: using 'cpu'");
+    _fluxDevice = "cpu";
+  }
   if (_fluxBackend == "flux2") {
     using Image = sensor_msgs::flux2_msg::Image;
     const std::uint32_t slot = static_cast<std::uint32_t>(frame_bytes + Image::kScalarBytes + 256);
-    _flux2Pub = std::make_unique<flux2::Publisher>(*this, topic, Image::kFingerprint, slot, count);
+    // On the SDK's own stream, so the commit waits for the retrieve that wrote the frame.
+    _flux2Pub = _fluxDevice == "cuda" ?
+      std::make_unique<flux2::Publisher>(
+      *this, topic, Image::kFingerprint, slot, count,
+      flux2::gpu::Stream::from_native(_zed->getCUDAStream())) :
+      std::make_unique<flux2::Publisher>(*this, topic, Image::kFingerprint, slot, count);
     RCLCPP_INFO_STREAM(
       get_logger(), " * flux2 channel: " << topic << " -> " << _flux2Pub->signpost_name());
     return;
@@ -616,10 +627,28 @@ void ZedCameraOne::initFluxPublisher()
     get_logger(), " * flux channel: " << topic << " -> " << _fluxPub->signpost_name());
 }
 
+namespace
+{
+
+// Where `host`, a byte of the slot's payload, is for the GPU; null on a host channel.
+std::uint8_t * deviceAddress(flux::WriteSlot &, std::uint8_t *)
+{
+  return nullptr;
+}
+
+std::uint8_t * deviceAddress(flux2::WriteSlot & slot, std::uint8_t * host)
+{
+  auto * base = static_cast<std::uint8_t *>(slot.device_ptr());
+  return base ? base + (host - static_cast<std::uint8_t *>(slot.data())) : nullptr;
+}
+
+}  // namespace
+
 template<class Image, class Pub>
 void ZedCameraOne::publishFluxImage(Pub & pub, const rclcpp::Time & timeStamp)
 {
-  typename Image::Builder b = Image::build__(pub);
+  auto slot = pub.loan();
+  typename Image::Builder b(slot);
   if (!b) {
     DEBUG_VD("flux: every slot borrowed, frame dropped");
     return;
@@ -629,7 +658,7 @@ void ZedCameraOne::publishFluxImage(Pub & pub, const rclcpp::Time & timeStamp)
   const std::uint32_t c = _rawNv12 ? 1u : (_24bitMode ? 3u : 4u);
   const char * encoding = _rawNv12 ? "nv12" : (_24bitMode ? "bgr8" : "bgra8");
   auto data = b.alloc__data(_rawNv12 ? w * h * 3 / 2 : w * h * c);
-  if (!retrieveFluxFrame(data.data())) {
+  if (!retrieveFluxFrame(data.data(), deviceAddress(slot, data.data()))) {
     return;
   }
 
@@ -647,7 +676,7 @@ void ZedCameraOne::publishFluxImage(Pub & pub, const rclcpp::Time & timeStamp)
   DEBUG_STREAM_VD("flux image " << w << "x" << h << " " << encoding << " published");
 }
 
-bool ZedCameraOne::retrieveFluxFrame(std::uint8_t * dst)
+bool ZedCameraOne::retrieveFluxFrame(std::uint8_t * dst, std::uint8_t * device_dst)
 {
   if (_rawNv12) {
     sl::RawBuffer raw;
@@ -658,10 +687,11 @@ bool ZedCameraOne::retrieveFluxFrame(std::uint8_t * dst)
   sl::VIEW view = _fluxRectified ?
     (_24bitMode ? sl::VIEW::LEFT_BGR : sl::VIEW::LEFT_BGRA) :
     (_24bitMode ? sl::VIEW::LEFT_UNRECTIFIED_BGR : sl::VIEW::LEFT_UNRECTIFIED_BGRA);
+  const sl::MEM mem = device_dst ? sl::MEM::GPU : sl::MEM::CPU;
   sl::Mat mat(
     _matResol, _24bitMode ? sl::MAT_TYPE::U8_C3 : sl::MAT_TYPE::U8_C4,
-    reinterpret_cast<sl::uchar1 *>(dst), _matResol.width * c, sl::MEM::CPU);
-  return _zed->retrieveImage(mat, view, sl::MEM::CPU, _matResol) == sl::ERROR_CODE::SUCCESS;
+    reinterpret_cast<sl::uchar1 *>(device_dst ? device_dst : dst), _matResol.width * c, mem);
+  return _zed->retrieveImage(mat, view, mem, _matResol) == sl::ERROR_CODE::SUCCESS;
 }
 
 bool ZedCameraOne::fluxActive() const

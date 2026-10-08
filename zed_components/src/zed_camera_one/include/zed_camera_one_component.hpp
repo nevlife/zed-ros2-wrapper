@@ -122,7 +122,7 @@ protected:
   template<class Image, class Pub>
   void publishFluxImage(Pub & pub, const rclcpp::Time & timeStamp);
   bool fluxActive() const;
-  bool retrieveFluxFrame(std::uint8_t * dst);
+  bool retrieveFluxFrame(std::uint8_t * dst, std::uint8_t * device_dst = nullptr);
 #ifdef ZED_WITH_AGNOCAST
   void publishAgnocastImage(const rclcpp::Time & timeStamp);
 #endif
@@ -387,6 +387,7 @@ private:
 
   bool _fluxEnabled = false;
   std::string _fluxBackend = "flux";
+  std::string _fluxDevice = "cpu";
   bool _fluxRectified = true;
   int _fluxSlotCount = 8;
   std::unique_ptr<flux::ros::Publisher> _fluxPub;
