@@ -33,10 +33,7 @@ share_dir = get_package_share_directory('zed_wrapper')
 default_cameras_path = os.path.join(share_dir, 'config', 'multi_camera.yaml')
 
 # Parameter override applied to every camera
-default_override_path = os.path.join(share_dir, 'config', 'flux.yaml')
-
-# Ahead of the param_overrides argument, which may replace them
-default_overrides = 'flux.backend:=flux2;flux.device:=cuda'
+default_override_path = os.path.join(share_dir, 'config', 'zedonex_multi_override.yaml')
 
 
 def parse_array_param(param):
@@ -55,7 +52,6 @@ def launch_setup(context, *args, **kwargs):
         serials = [str(sn) for sn in cameras['serials']]
     # Opening the cameras at once fails with CAMERA STREAM FAILED TO START
     stagger = float(cameras['stagger'])
-    overrides = default_overrides + ';' + LaunchConfiguration('param_overrides').perform(context)
 
     actions = []
     for i, sn in enumerate(serials):
@@ -67,8 +63,7 @@ def launch_setup(context, *args, **kwargs):
                 'serial_number': sn,
                 'ros_params_override_path': default_override_path,
                 'publish_urdf': 'false',
-                'publish_tf': 'false',
-                'param_overrides': overrides
+                'publish_tf': 'false'
             }.items()
         )
         actions.append(TimerAction(period=i * stagger, actions=[include]))
@@ -82,11 +77,6 @@ def generate_launch_description():
                 'serials',
                 default_value='',
                 description='Serial numbers of the cameras to open. Default: the list in config/multi_camera.yaml'),
-            DeclareLaunchArgument(
-                'param_overrides',
-                default_value='',
-                description='Passed to every camera after ' + default_overrides + ': '
-                            'semicolon-separated key:=value pairs, as zed_camera.launch.py takes them'),
             OpaqueFunction(function=launch_setup)
         ]
     )

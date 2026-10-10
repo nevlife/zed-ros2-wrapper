@@ -1522,10 +1522,9 @@ void ZedCamera::getFluxParams()
     shared_from_this(), "flux.backend", mFluxBackend, mFluxBackend,
     " * flux backend: ");
   if (mFluxBackend != "flux" && mFluxBackend != "flux2") {
-    RCLCPP_WARN_STREAM(
-      get_logger(), "'flux.backend' must be 'flux' or 'flux2', not '" << mFluxBackend <<
-        "': using 'flux'");
-    mFluxBackend = "flux";
+    RCLCPP_ERROR_STREAM(
+      get_logger(), "'flux.backend' must be 'flux' or 'flux2', not '" << mFluxBackend << "'");
+    exit(EXIT_FAILURE);
   }
   sl_tools::getParam(
     shared_from_this(), "flux.rectified", mFluxRectified, mFluxRectified,

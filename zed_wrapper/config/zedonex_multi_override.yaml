@@ -1,4 +1,4 @@
-# Parameter override applied by zed2i_camera.py
+# Parameter override applied by zedonex_multi_camera.launch.py
 
 /**:
     ros__parameters:
@@ -7,5 +7,6 @@
             raw_nv12: false
         flux:
             enable: true
-            backend: "flux"
+            backend: "flux2"
+            device: "cuda"
             slot_count: 8

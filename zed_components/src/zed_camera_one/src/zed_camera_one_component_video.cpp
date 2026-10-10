@@ -547,12 +547,16 @@ void ZedCameraOne::getFluxParams()
   known = known || _fluxBackend == "iceoryx2";
 #endif
   if (!known) {
-    RCLCPP_WARN_STREAM(
-      get_logger(), "'flux.backend' '" << _fluxBackend << "' is not available: using 'flux'");
-    _fluxBackend = "flux";
+    RCLCPP_ERROR_STREAM(get_logger(), "'flux.backend' '" << _fluxBackend << "' is not available");
+    exit(EXIT_FAILURE);
   }
   sl_tools::getParam(
     shared_from_this(), "flux.device", _fluxDevice, _fluxDevice, " * flux device: ");
+  if (_fluxDevice != "cpu" && _fluxDevice != "cuda") {
+    RCLCPP_ERROR_STREAM(
+      get_logger(), "'flux.device' must be 'cpu' or 'cuda', not '" << _fluxDevice << "'");
+    exit(EXIT_FAILURE);
+  }
   sl_tools::getParam(
     shared_from_this(), "flux.rectified", _fluxRectified, _fluxRectified,
     " * flux image rectified: ");
@@ -604,8 +608,8 @@ void ZedCameraOne::initFluxPublisher()
   }
 #endif
   if (_fluxDevice == "cuda" && (_fluxBackend != "flux2" || _rawNv12)) {
-    RCLCPP_WARN(get_logger(), "'flux.device' 'cuda' needs backend 'flux2' and no raw_nv12: using 'cpu'");
-    _fluxDevice = "cpu";
+    RCLCPP_ERROR(get_logger(), "'flux.device' 'cuda' needs backend 'flux2' and no raw_nv12");
+    exit(EXIT_FAILURE);
   }
   if (_fluxBackend == "flux2") {
     using Image = sensor_msgs::flux2_msg::Image;
