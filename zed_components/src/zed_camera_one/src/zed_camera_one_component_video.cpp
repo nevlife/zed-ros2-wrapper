@@ -24,21 +24,6 @@
 #include <nvbufsurface.h>
 
 #include "sensor_msgs/flux/image.hpp"
-#include "sensor_msgs/flux2/image.hpp"
-#ifdef ZED_WITH_ICEORYX2
-#include "iox2/iceoryx2.hpp"
-
-// The frame's metadata beside an iceoryx2 byte slice; zed_fanout_bench declares the same struct.
-struct ZedFrameHeader
-{
-  static constexpr const char * IOX2_TYPE_NAME = "ZedFrameHeader";
-  std::int64_t stamp_ns;
-  std::uint32_t width;
-  std::uint32_t height;
-  std::uint32_t step;
-  char encoding[12];
-};
-#endif
 
 namespace
 {
@@ -48,18 +33,6 @@ std::mutex g_it_pub_init_mutex;
 
 namespace stereolabs
 {
-
-#ifdef ZED_WITH_ICEORYX2
-struct ZedCameraOne::Iox2Pub
-{
-  static constexpr iox2::ServiceType Ipc = iox2::ServiceType::Ipc;
-  iox2::Node<Ipc> node;
-  iox2::PortFactoryPublishSubscribe<Ipc, iox2::bb::Slice<std::uint8_t>, ZedFrameHeader> service;
-  iox2::Publisher<Ipc, iox2::bb::Slice<std::uint8_t>, ZedFrameHeader> publisher;
-  iox2::PortFactoryEvent<Ipc> event;
-  iox2::Notifier<Ipc> notifier;
-};
-#endif
 
 void ZedCameraOne::getVideoParams()
 {
@@ -537,20 +510,6 @@ void ZedCameraOne::getFluxParams()
     shared_from_this(), "flux.enable", _fluxEnabled, _fluxEnabled,
     " * flux color image channel: ");
   sl_tools::getParam(
-    shared_from_this(), "flux.backend", _fluxBackend, _fluxBackend,
-    " * flux backend: ");
-  bool known = _fluxBackend == "flux" || _fluxBackend == "flux2";
-#ifdef ZED_WITH_AGNOCAST
-  known = known || _fluxBackend == "agnocast";
-#endif
-#ifdef ZED_WITH_ICEORYX2
-  known = known || _fluxBackend == "iceoryx2";
-#endif
-  if (!known) {
-    RCLCPP_ERROR_STREAM(get_logger(), "'flux.backend' '" << _fluxBackend << "' is not available");
-    exit(EXIT_FAILURE);
-  }
-  sl_tools::getParam(
     shared_from_this(), "flux.device", _fluxDevice, _fluxDevice, " * flux device: ");
   if (_fluxDevice != "cpu" && _fluxDevice != "cuda") {
     RCLCPP_ERROR_STREAM(
@@ -576,57 +535,18 @@ void ZedCameraOne::initFluxPublisher()
   const std::size_t h = _matResol.height;
   const std::size_t frame_bytes = _rawNv12 ? w * h * 3 / 2 : w * h * (_24bitMode ? 3 : 4);
   const std::uint32_t count = static_cast<std::uint32_t>(_fluxSlotCount);
-#ifdef ZED_WITH_AGNOCAST
-  if (_fluxBackend == "agnocast") {
-    _agnoPub = agnocast::create_publisher<sensor_msgs::msg::Image>(
-      this, topic, rclcpp::QoS(rclcpp::KeepLast(count)).best_effort());
-    RCLCPP_INFO_STREAM(get_logger(), " * agnocast topic: " << topic);
-    return;
-  }
-#endif
-#ifdef ZED_WITH_ICEORYX2
-  if (_fluxBackend == "iceoryx2") {
-    constexpr iox2::ServiceType Ipc = iox2::ServiceType::Ipc;
-    auto node = iox2::NodeBuilder().create<Ipc>().value();
-    auto name = iox2::ServiceName::create(topic.c_str()).value();
-    // zed_fanout_bench opens the service with the same settings.
-    auto service = node.service_builder(name)
-      .publish_subscribe<iox2::bb::Slice<std::uint8_t>>()
-      .user_header<ZedFrameHeader>()
-      .max_subscribers(8)
-      .subscriber_max_buffer_size(2)
-      .history_size(0)
-      .open_or_create().value();
-    auto publisher = service.publisher_builder().initial_max_slice_len(frame_bytes).create().value();
-    auto event = node.service_builder(name).event().open_or_create().value();
-    auto notifier = event.notifier_builder().create().value();
-    _iox2Pub = std::make_shared<Iox2Pub>(
-      Iox2Pub{std::move(node), std::move(service), std::move(publisher), std::move(event),
-        std::move(notifier)});
-    RCLCPP_INFO_STREAM(get_logger(), " * iceoryx2 service: " << topic);
-    return;
-  }
-#endif
-  if (_fluxDevice == "cuda" && (_fluxBackend != "flux2" || _rawNv12)) {
-    RCLCPP_ERROR(get_logger(), "'flux.device' 'cuda' needs backend 'flux2' and no raw_nv12");
+  if (_fluxDevice == "cuda" && _rawNv12) {
+    RCLCPP_ERROR(get_logger(), "'flux.device' 'cuda' needs no raw_nv12");
     exit(EXIT_FAILURE);
-  }
-  if (_fluxBackend == "flux2") {
-    using Image = sensor_msgs::flux2_msg::Image;
-    const std::uint32_t slot = static_cast<std::uint32_t>(frame_bytes + Image::kScalarBytes + 256);
-    // On the SDK's own stream, so the commit waits for the retrieve that wrote the frame.
-    _flux2Pub = _fluxDevice == "cuda" ?
-      std::make_unique<flux2::Publisher>(
-      *this, topic, Image::kFingerprint, slot, count,
-      flux2::gpu::Stream::from_native(_zed->getCUDAStream())) :
-      std::make_unique<flux2::Publisher>(*this, topic, Image::kFingerprint, slot, count);
-    RCLCPP_INFO_STREAM(
-      get_logger(), " * flux2 channel: " << topic << " -> " << _flux2Pub->signpost_name());
-    return;
   }
   using Image = sensor_msgs::flux_msg::Image;
   const std::uint32_t slot = static_cast<std::uint32_t>(frame_bytes + Image::kScalarBytes + 256);
-  _fluxPub = std::make_unique<flux::ros::Publisher>(*this, topic, Image::kFingerprint, slot, count);
+  // On the SDK's own stream, so the commit waits for the retrieve that wrote the frame.
+  _fluxPub = _fluxDevice == "cuda" ?
+    std::make_unique<flux::Publisher>(
+    *this, topic, Image::kFingerprint, slot, count,
+    flux::gpu::Stream::from_native(_zed->getCUDAStream())) :
+    std::make_unique<flux::Publisher>(*this, topic, Image::kFingerprint, slot, count);
   RCLCPP_INFO_STREAM(
     get_logger(), " * flux channel: " << topic << " -> " << _fluxPub->signpost_name());
 }
@@ -635,12 +555,7 @@ namespace
 {
 
 // Where `host`, a byte of the slot's payload, is for the GPU; null on a host channel.
-std::uint8_t * deviceAddress(flux::WriteSlot &, std::uint8_t *)
-{
-  return nullptr;
-}
-
-std::uint8_t * deviceAddress(flux2::WriteSlot & slot, std::uint8_t * host)
+std::uint8_t * deviceAddress(flux::WriteSlot & slot, std::uint8_t * host)
 {
   auto * base = static_cast<std::uint8_t *>(slot.device_ptr());
   return base ? base + (host - static_cast<std::uint8_t *>(slot.data())) : nullptr;
@@ -648,11 +563,10 @@ std::uint8_t * deviceAddress(flux2::WriteSlot & slot, std::uint8_t * host)
 
 }  // namespace
 
-template<class Image, class Pub>
-void ZedCameraOne::publishFluxImage(Pub & pub, const rclcpp::Time & timeStamp)
+void ZedCameraOne::publishFluxImage(const rclcpp::Time & timeStamp)
 {
-  auto slot = pub.loan();
-  typename Image::Builder b(slot);
+  auto slot = _fluxPub->loan();
+  sensor_msgs::flux_msg::Image::Builder b(slot);
   if (!b) {
     DEBUG_VD("flux: every slot borrowed, frame dropped");
     return;
@@ -700,65 +614,8 @@ bool ZedCameraOne::retrieveFluxFrame(std::uint8_t * dst, std::uint8_t * device_d
 
 bool ZedCameraOne::fluxActive() const
 {
-  bool active = _fluxPub || _flux2Pub;
-#ifdef ZED_WITH_AGNOCAST
-  active = active || _agnoPub;
-#endif
-#ifdef ZED_WITH_ICEORYX2
-  active = active || _iox2Pub;
-#endif
-  return active;
+  return _fluxPub != nullptr;
 }
-
-#ifdef ZED_WITH_AGNOCAST
-void ZedCameraOne::publishAgnocastImage(const rclcpp::Time & timeStamp)
-{
-  const std::uint32_t w = _matResol.width;
-  const std::uint32_t h = _matResol.height;
-  const std::uint32_t c = _rawNv12 ? 1u : (_24bitMode ? 3u : 4u);
-  auto msg = _agnoPub->borrow_loaned_message();
-  msg->data.resize(_rawNv12 ? w * h * 3 / 2 : w * h * c);
-  if (!retrieveFluxFrame(msg->data.data())) {
-    return;
-  }
-  msg->header.stamp = _usePubTimestamps ? get_clock()->now() : timeStamp;
-  msg->header.frame_id = _camOptFrameId;
-  msg->height = h;
-  msg->width = w;
-  msg->encoding = _rawNv12 ? "nv12" : (_24bitMode ? "bgr8" : "bgra8");
-  msg->is_bigendian = 0;
-  msg->step = w * c;
-  _agnoPub->publish(std::move(msg));
-}
-#endif
-
-#ifdef ZED_WITH_ICEORYX2
-void ZedCameraOne::publishIox2Image(const rclcpp::Time & timeStamp)
-{
-  const std::uint32_t w = _matResol.width;
-  const std::uint32_t h = _matResol.height;
-  const std::uint32_t c = _rawNv12 ? 1u : (_24bitMode ? 3u : 4u);
-  auto loan = _iox2Pub->publisher.loan_slice_uninit(_rawNv12 ? w * h * 3 / 2 : w * h * c);
-  if (!loan.has_value()) {
-    DEBUG_VD("iceoryx2: no sample to loan, frame dropped");
-    return;
-  }
-  auto sample = std::move(loan.value());
-  if (!retrieveFluxFrame(sample.payload_mut().data())) {
-    return;
-  }
-  ZedFrameHeader & hdr = sample.user_header_mut();
-  hdr.stamp_ns = (_usePubTimestamps ? get_clock()->now() : timeStamp).nanoseconds();
-  hdr.width = w;
-  hdr.height = h;
-  hdr.step = w * c;
-  std::snprintf(
-    hdr.encoding, sizeof(hdr.encoding), "%s", _rawNv12 ? "nv12" : (_24bitMode ? "bgr8" : "bgra8"));
-  if (iox2::send(iox2::assume_init(std::move(sample))).has_value()) {
-    _iox2Pub->notifier.notify().value();
-  }
-}
-#endif
 
 bool ZedCameraOne::copyRawNv12(void * raw_surface, std::uint8_t * dst)
 {
@@ -947,17 +804,7 @@ void ZedCameraOne::publishImages()
   }
 
   if (_fluxPub) {
-    publishFluxImage<sensor_msgs::flux_msg::Image>(*_fluxPub, timeStamp);
-  } else if (_flux2Pub) {
-    publishFluxImage<sensor_msgs::flux2_msg::Image>(*_flux2Pub, timeStamp);
-#ifdef ZED_WITH_AGNOCAST
-  } else if (_agnoPub) {
-    publishAgnocastImage(timeStamp);
-#endif
-#ifdef ZED_WITH_ICEORYX2
-  } else if (_iox2Pub) {
-    publishIox2Image(timeStamp);
-#endif
+    publishFluxImage(timeStamp);
   } else if (_rawNv12) {
     publishRawNv12Image(timeStamp);
   }

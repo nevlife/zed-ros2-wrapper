@@ -84,21 +84,9 @@ endif()
 # Dependencies
 find_package(nlohmann_json REQUIRED)
 
-# flux shared-memory publisher (zed_camera and zed_camera_one, `flux.enable` and `flux.backend`)
+# flux shared-memory publisher (zed_camera and zed_camera_one, `flux.enable`)
 find_package(flux_cpp REQUIRED)
-find_package(flux2_cpp REQUIRED)
-find_package(flux2_std_adapters REQUIRED)
-find_package(flux_gen REQUIRED)
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
-set(FLUX_ADAPTERS "${CMAKE_CURRENT_BINARY_DIR}/flux_adapters")
-add_custom_command(
-  OUTPUT "${FLUX_ADAPTERS}/sensor_msgs/flux/image.hpp"
-  COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${FLUX_GEN_PYTHON_DIR}:$ENV{PYTHONPATH}"
-          ${Python3_EXECUTABLE} -m flux_gen --pkg sensor_msgs
-          --msg "${sensor_msgs_DIR}/../msg/Image.msg" --out-cpp "${FLUX_ADAPTERS}"
-  DEPENDS "${sensor_msgs_DIR}/../msg/Image.msg"
-  COMMENT "flux_gen: sensor_msgs/Image adapter"
-  VERBATIM)
+find_package(flux_std_adapters REQUIRED)
 
 # Suppress deprecation warnings from ZED SDK cmake files (uses old CMake features)
 if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.27")
@@ -331,11 +319,9 @@ add_library(zed_camera_component SHARED
     ${SL_TOOLS_SRC}
     ${ZED_CAMERA_INC}
     ${ZED_CAMERA_SRC}
-    "${FLUX_ADAPTERS}/sensor_msgs/flux/image.hpp"
 )
-target_include_directories(zed_camera_component PRIVATE "${FLUX_ADAPTERS}"
-    ${flux2_std_adapters_INCLUDE_DIRS})
-target_link_libraries(zed_camera_component flux_cpp::flux_cpp flux2_cpp::flux2_cpp)
+target_include_directories(zed_camera_component PRIVATE ${flux_std_adapters_INCLUDE_DIRS})
+target_link_libraries(zed_camera_component flux_cpp::flux_cpp)
 target_include_directories(zed_camera_component PUBLIC
     ${CUDA_INCLUDE_DIRS}
     ${ZED_INCLUDE_DIRS}
@@ -360,24 +346,12 @@ add_library(zed_camera_one_component SHARED
     ${SL_TOOLS_SRC}
     ${ZED_CAMERA_ONE_INC}
     ${ZED_CAMERA_ONE_SRC}
-    "${FLUX_ADAPTERS}/sensor_msgs/flux/image.hpp"
 )
 target_compile_definitions(zed_camera_one_component PRIVATE SL_ENABLE_ADVANCED_CAPTURE_API)
-target_include_directories(zed_camera_one_component PRIVATE "${FLUX_ADAPTERS}"
-    ${flux2_std_adapters_INCLUDE_DIRS} /usr/src/jetson_multimedia_api/include)
+target_include_directories(zed_camera_one_component PRIVATE ${flux_std_adapters_INCLUDE_DIRS}
+    /usr/src/jetson_multimedia_api/include)
 target_link_directories(zed_camera_one_component PRIVATE /usr/lib/aarch64-linux-gnu/nvidia)
-target_link_libraries(zed_camera_one_component flux_cpp::flux_cpp flux2_cpp::flux2_cpp nvbufsurface)
-# Benchmark-only backends of `flux.backend`, built where the libraries are found.
-find_package(agnocastlib QUIET)
-if(agnocastlib_FOUND)
-  target_compile_definitions(zed_camera_one_component PRIVATE ZED_WITH_AGNOCAST)
-  ament_target_dependencies(zed_camera_one_component agnocastlib)
-endif()
-find_package(iceoryx2-cxx QUIET)
-if(iceoryx2-cxx_FOUND)
-  target_compile_definitions(zed_camera_one_component PRIVATE ZED_WITH_ICEORYX2)
-  target_link_libraries(zed_camera_one_component iceoryx2-cxx::static-lib-cxx)
-endif()
+target_link_libraries(zed_camera_one_component flux_cpp::flux_cpp nvbufsurface)
 target_include_directories(zed_camera_one_component PUBLIC
     ${CUDA_INCLUDE_DIRS}
     ${ZED_INCLUDE_DIRS}

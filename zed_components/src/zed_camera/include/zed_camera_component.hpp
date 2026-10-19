@@ -24,8 +24,7 @@
 
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
-#include "flux/ros/publisher.hpp"
-#include "flux2/publisher.hpp"
+#include "flux/publisher.hpp"
 
 #include "sl_version.hpp"
 #include "sl_tools.hpp"
@@ -83,10 +82,6 @@ protected:
   void initPublishers();
   void initVideoDepthPublishers();
   void initFluxPublishers();
-  template<class Image, class Pub>
-  void makeFluxPublishers(
-    std::unique_ptr<Pub> & left, std::unique_ptr<Pub> & right,
-    std::unique_ptr<Pub> & depth);
 
   void initSubscribers();
 
@@ -303,9 +298,8 @@ protected:
   bool retrieveConfidence(bool gpu);
   bool retrieveDisparityMap();
   bool retrieveDepthInfo();
-  template<class Image, class Pub>
-  void publishFluxImages(Pub & left, Pub & right, Pub * depth);
-  bool fluxActive() const {return mFluxPubLeft || mFlux2PubLeft;}
+  void publishFluxImages();
+  bool fluxActive() const {return mFluxPubLeft != nullptr;}
 
   void publishVideoDepth(rclcpp::Time & out_pub_ts);
   void publishLeftAndRgbImages(const rclcpp::Time & t);
@@ -1047,15 +1041,11 @@ private:
   sl::Mat mMatDepth, mMatDispMap, mMatDispImg, mMatConf;
 
   bool mFluxEnabled = false;
-  std::string mFluxBackend = "flux";
   bool mFluxRectified = true;
   int mFluxSlotCount = 8;
-  std::unique_ptr<flux::ros::Publisher> mFluxPubLeft;
-  std::unique_ptr<flux::ros::Publisher> mFluxPubRight;
-  std::unique_ptr<flux::ros::Publisher> mFluxPubDepth;
-  std::unique_ptr<flux2::Publisher> mFlux2PubLeft;
-  std::unique_ptr<flux2::Publisher> mFlux2PubRight;
-  std::unique_ptr<flux2::Publisher> mFlux2PubDepth;
+  std::unique_ptr<flux::Publisher> mFluxPubLeft;
+  std::unique_ptr<flux::Publisher> mFluxPubRight;
+  std::unique_ptr<flux::Publisher> mFluxPubDepth;
 
   float mMinDepth = 0.0f;
   float mMaxDepth = 0.0f;

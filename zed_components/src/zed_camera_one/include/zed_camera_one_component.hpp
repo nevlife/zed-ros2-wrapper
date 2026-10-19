@@ -21,11 +21,7 @@
 #include <memory>
 #include <sl/CameraOne.hpp>
 
-#include "flux/ros/publisher.hpp"
-#include "flux2/publisher.hpp"
-#ifdef ZED_WITH_AGNOCAST
-#include "agnocast/agnocast.hpp"
-#endif
+#include "flux/publisher.hpp"
 
 #include "sl_version.hpp"
 #include "sl_tools.hpp"
@@ -119,16 +115,9 @@ protected:
   void publishImages();
   void getFluxParams();
   void initFluxPublisher();
-  template<class Image, class Pub>
-  void publishFluxImage(Pub & pub, const rclcpp::Time & timeStamp);
+  void publishFluxImage(const rclcpp::Time & timeStamp);
   bool fluxActive() const;
-  bool retrieveFluxFrame(std::uint8_t * dst, std::uint8_t * device_dst = nullptr);
-#ifdef ZED_WITH_AGNOCAST
-  void publishAgnocastImage(const rclcpp::Time & timeStamp);
-#endif
-#ifdef ZED_WITH_ICEORYX2
-  void publishIox2Image(const rclcpp::Time & timeStamp);
-#endif
+  bool retrieveFluxFrame(std::uint8_t * dst, std::uint8_t * device_dst);
   bool copyRawNv12(void * raw_surface, std::uint8_t * dst);
   void publishColorImage(const rclcpp::Time & timeStamp);
   void publishColorRawImage(const rclcpp::Time & timeStamp);
@@ -386,19 +375,10 @@ private:
   sl::Mat _matGray, _matGrayRaw;
 
   bool _fluxEnabled = false;
-  std::string _fluxBackend = "flux";
   std::string _fluxDevice = "cpu";
   bool _fluxRectified = true;
   int _fluxSlotCount = 8;
-  std::unique_ptr<flux::ros::Publisher> _fluxPub;
-  std::unique_ptr<flux2::Publisher> _flux2Pub;
-#ifdef ZED_WITH_AGNOCAST
-  agnocast::Publisher<sensor_msgs::msg::Image>::SharedPtr _agnoPub;
-#endif
-#ifdef ZED_WITH_ICEORYX2
-  struct Iox2Pub;
-  std::shared_ptr<Iox2Pub> _iox2Pub;
-#endif
+  std::unique_ptr<flux::Publisher> _fluxPub;
   // <---- Publisher variables
 
   // ----> Parameters
