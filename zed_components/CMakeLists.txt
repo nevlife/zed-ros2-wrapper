@@ -133,6 +133,7 @@ set(DEPENDENCIES
     shape_msgs
     robot_localization
     backward_ros
+    flux_wrapper
 )
 
 find_package(ament_cmake_auto REQUIRED)
@@ -169,6 +170,7 @@ find_package(diagnostic_updater REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(shape_msgs REQUIRED)
 find_package(robot_localization REQUIRED)
+find_package(flux_wrapper REQUIRED)
 
 # Debug
 find_package(backward_ros REQUIRED)
@@ -300,6 +302,7 @@ set(SL_TOOLS_INC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/include/sl_types.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/include/sl_type_adapter.hpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/include/sl_cuda_buffer.hpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/include/sl_flux.hpp
 )
 
 set(SL_TOOLS_SRC
@@ -308,6 +311,7 @@ set(SL_TOOLS_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/src/gnss_replay.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/src/sl_types.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/src/sl_cuda_buffer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/tools/src/sl_flux.cpp
 )
 
 set(ZED_CAMERA_INC

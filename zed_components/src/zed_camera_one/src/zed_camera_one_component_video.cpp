@@ -461,10 +461,16 @@ bool ZedCameraOne::areImageTopicsSubscribed()
       auto ipc_sub_count = [](const auto & pub) -> size_t {
           return pub ? pub->get_subscription_count() : 0;
         };
-      _colorSubCount = _pubColorImg.getNumSubscribers() + ipc_sub_count(_pubIpcColorImg);
-      _colorRawSubCount = _pubColorRawImg.getNumSubscribers() + ipc_sub_count(_pubIpcColorRawImg);
-      _graySubCount = _pubGrayImg.getNumSubscribers() + ipc_sub_count(_pubIpcGrayImg);
-      _grayRawSubCount = _pubGrayRawImg.getNumSubscribers() + ipc_sub_count(_pubIpcGrayRawImg);
+      // flux subscribers of the same topic, with ENABLE_FLUX=1. Every image topic holds at most
+      // four bytes a pixel.
+      const size_t flux_bytes = _matResol.width * _matResol.height * 4;
+      auto flux_sub_count = [&](const image_transport::Publisher & pub) -> size_t {
+          return _flux->imageSubscribers(pub.getTopic(), flux_bytes);
+        };
+      _colorSubCount = _pubColorImg.getNumSubscribers() + ipc_sub_count(_pubIpcColorImg) + flux_sub_count(_pubColorImg);
+      _colorRawSubCount = _pubColorRawImg.getNumSubscribers() + ipc_sub_count(_pubIpcColorRawImg) + flux_sub_count(_pubColorRawImg);
+      _graySubCount = _pubGrayImg.getNumSubscribers() + ipc_sub_count(_pubIpcGrayImg) + flux_sub_count(_pubGrayImg);
+      _grayRawSubCount = _pubGrayRawImg.getNumSubscribers() + ipc_sub_count(_pubIpcGrayRawImg) + flux_sub_count(_pubGrayRawImg);
     } else {
 #ifdef FOUND_ISAAC_ROS_NITROS
       _colorSubCount = count_subscribers(_imgColorTopic) + count_subscribers(
@@ -748,6 +754,12 @@ void ZedCameraOne::publishImageWithInfo(
   const std::string & imgFrameId,
   const rclcpp::Time & t)
 {
+  const rclcpp::Time stamp = _usePubTimestamps ? get_clock()->now() : t;
+  if (_flux->publishImage(pubImg.getTopic(), img, imgFrameId, stamp)) {
+    publishCameraInfo(infoPub, camInfoMsg, stamp);
+    publishCameraInfo(infoPubTrans, camInfoMsg, stamp);
+    return;
+  }
   auto image = sl_tools::imageToROSmsg(img, imgFrameId, t, _usePubTimestamps);
   DEBUG_STREAM_VD("Publishing IMAGE message: " << t.nanoseconds() << " nsec");
   try {
@@ -778,6 +790,10 @@ void ZedCameraOne::publishImageWithInfo(
   try {
     publishCameraInfo(infoPub, camInfoMsg, stamp);
     publishCameraInfo(infoPubTrans, camInfoMsg, stamp);
+
+    if (_flux->publishImage(itPubImg.getTopic(), img, imgFrameId, stamp)) {
+      return;
+    }
 
     // Image retrieved on GPU for the CUDA transport
     if (img.getMemoryType() == sl::MEM::GPU) {

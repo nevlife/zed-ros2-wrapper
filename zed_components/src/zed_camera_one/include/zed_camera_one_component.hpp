@@ -22,6 +22,7 @@
 
 #include "sl_version.hpp"
 #include "sl_tools.hpp"
+#include "sl_flux.hpp"
 #include "sl_types.hpp"
 #include "sl_cuda_buffer.hpp"
 #include "visibility_control.hpp"
@@ -646,6 +647,8 @@ private:
   const std::string _srvToggleSvoPauseName = "toggle_svo_pause";
   const std::string _srvSetSvoFrameName = "set_svo_frame";
   // <---- Services names
+  // Image and point cloud topics over flux, with ENABLE_FLUX=1 at run time
+  std::unique_ptr<sl_tools::FluxTopics> _flux = std::make_unique<sl_tools::FluxTopics>(*this);
 };
 
 }  // namespace stereolabs

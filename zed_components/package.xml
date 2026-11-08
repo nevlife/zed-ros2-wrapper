@@ -38,6 +38,7 @@
     <depend>diagnostic_updater</depend>
     <depend>visualization_msgs</depend>
     <depend>robot_localization</depend>
+    <depend>flux_wrapper</depend>
     
     <exec_depend>launch_ros</exec_depend>
     <exec_depend>image_transport_plugins</exec_depend>

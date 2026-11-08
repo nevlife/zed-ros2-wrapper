@@ -938,37 +938,43 @@ bool ZedCamera::updateVideoDepthSubscribers(bool force)
   auto ipc_sub_count = [](const auto & pub) -> size_t {
       return pub ? pub->get_subscription_count() : 0;
     };
+  // flux subscribers of the same topic, with ENABLE_FLUX=1. Every image topic holds at most four
+  // bytes a pixel.
+  const size_t flux_bytes = mMatResol.width * mMatResol.height * 4;
+  auto flux_sub_count = [&](const image_transport::Publisher & pub) -> size_t {
+      return mFlux->imageSubscribers(pub.getTopic(), flux_bytes);
+    };
 
   try {
     if (_nitrosDisabled) {
       if (mPublishImgRgb) {
-        mRgbSubCount = mPubRgb.getNumSubscribers() + ipc_sub_count(mPubIpcRgb);
+        mRgbSubCount = mPubRgb.getNumSubscribers() + ipc_sub_count(mPubIpcRgb) + flux_sub_count(mPubRgb);
         if (mPublishImgRaw) {
-          mRgbRawSubCount = mPubRawRgb.getNumSubscribers() + ipc_sub_count(mPubIpcRawRgb);
+          mRgbRawSubCount = mPubRawRgb.getNumSubscribers() + ipc_sub_count(mPubIpcRawRgb) + flux_sub_count(mPubRawRgb);
         }
         if (mPublishImgGray) {
-          mRgbGraySubCount = mPubRgbGray.getNumSubscribers() + ipc_sub_count(mPubIpcRgbGray);
+          mRgbGraySubCount = mPubRgbGray.getNumSubscribers() + ipc_sub_count(mPubIpcRgbGray) + flux_sub_count(mPubRgbGray);
           if (mPublishImgRaw) {
             mRgbGrayRawSubCount =
-              mPubRawRgbGray.getNumSubscribers() + ipc_sub_count(mPubIpcRawRgbGray);
+              mPubRawRgbGray.getNumSubscribers() + ipc_sub_count(mPubIpcRawRgbGray) + flux_sub_count(mPubRawRgbGray);
           }
         }
       }
       if (mPublishImgLeftRight) {
-        mLeftSubCount = mPubLeft.getNumSubscribers() + ipc_sub_count(mPubIpcLeft);
-        mRightSubCount = mPubRight.getNumSubscribers() + ipc_sub_count(mPubIpcRight);
+        mLeftSubCount = mPubLeft.getNumSubscribers() + ipc_sub_count(mPubIpcLeft) + flux_sub_count(mPubLeft);
+        mRightSubCount = mPubRight.getNumSubscribers() + ipc_sub_count(mPubIpcRight) + flux_sub_count(mPubRight);
         if (mPublishImgRaw) {
-          mLeftRawSubCount = mPubRawLeft.getNumSubscribers() + ipc_sub_count(mPubIpcRawLeft);
-          mRightRawSubCount = mPubRawRight.getNumSubscribers() + ipc_sub_count(mPubIpcRawRight);
+          mLeftRawSubCount = mPubRawLeft.getNumSubscribers() + ipc_sub_count(mPubIpcRawLeft) + flux_sub_count(mPubRawLeft);
+          mRightRawSubCount = mPubRawRight.getNumSubscribers() + ipc_sub_count(mPubIpcRawRight) + flux_sub_count(mPubRawRight);
         }
         if (mPublishImgGray) {
-          mLeftGraySubCount = mPubLeftGray.getNumSubscribers() + ipc_sub_count(mPubIpcLeftGray);
-          mRightGraySubCount = mPubRightGray.getNumSubscribers() + ipc_sub_count(mPubIpcRightGray);
+          mLeftGraySubCount = mPubLeftGray.getNumSubscribers() + ipc_sub_count(mPubIpcLeftGray) + flux_sub_count(mPubLeftGray);
+          mRightGraySubCount = mPubRightGray.getNumSubscribers() + ipc_sub_count(mPubIpcRightGray) + flux_sub_count(mPubRightGray);
           if (mPublishImgRaw) {
             mLeftGrayRawSubCount =
-              mPubRawLeftGray.getNumSubscribers() + ipc_sub_count(mPubIpcRawLeftGray);
+              mPubRawLeftGray.getNumSubscribers() + ipc_sub_count(mPubIpcRawLeftGray) + flux_sub_count(mPubRawLeftGray);
             mRightGrayRawSubCount =
-              mPubRawRightGray.getNumSubscribers() + ipc_sub_count(mPubIpcRawRightGray);
+              mPubRawRightGray.getNumSubscribers() + ipc_sub_count(mPubIpcRawRightGray) + flux_sub_count(mPubRawRightGray);
           }
         }
       }
@@ -1010,17 +1016,17 @@ bool ZedCamera::updateVideoDepthSubscribers(bool force)
     if (!mDepthDisabled) {
       if (_nitrosDisabled) {
         if (mPublishDepthMap) {
-          mDepthSubCount = mPubDepth.getNumSubscribers() + ipc_sub_count(mPubIpcDepth);
+          mDepthSubCount = mPubDepth.getNumSubscribers() + ipc_sub_count(mPubIpcDepth) + flux_sub_count(mPubDepth);
         }
         if (mPublishDepthImage) {
           mDepthImageSubCount = mPubDepthImage.getNumSubscribers() +
-            ipc_sub_count(mPubIpcDepthImage);
+            ipc_sub_count(mPubIpcDepthImage) + flux_sub_count(mPubDepthImage);
         }
         if (mPublishConfidence) {
-          mConfMapSubCount = mPubConfMap.getNumSubscribers() + ipc_sub_count(mPubIpcConfMap);
+          mConfMapSubCount = mPubConfMap.getNumSubscribers() + ipc_sub_count(mPubIpcConfMap) + flux_sub_count(mPubConfMap);
         }
         if (mPublishDisparity) {
-          mDispImgSubCount = mPubDispImg.getNumSubscribers() + ipc_sub_count(mPubIpcDispImg);
+          mDispImgSubCount = mPubDispImg.getNumSubscribers() + ipc_sub_count(mPubIpcDispImg) + flux_sub_count(mPubDispImg);
         }
       } else {
 #ifdef FOUND_ISAAC_ROS_NITROS
@@ -1051,6 +1057,7 @@ bool ZedCamera::updateVideoDepthSubscribers(bool force)
         mPcSubCount = mPubCloud->get_subscription_count();
       }
 #endif
+      mPcSubCount += mFlux->cloudSubscribers(mPointcloudTopic, static_cast<size_t>(mPcResol.width) * mPcResol.height * 16);
     }
   } catch (...) {
     rcutils_reset_error();
@@ -2330,6 +2337,12 @@ void ZedCamera::publishImageWithInfo(
   const std::string & imgFrameId,
   const rclcpp::Time & t)
 {
+  const rclcpp::Time stamp = mUsePubTimestamps ? get_clock()->now() : t;
+  if (mFlux->publishImage(pubImg.getTopic(), img, imgFrameId, stamp)) {
+    publishCameraInfo(infoPub, camInfoMsg, stamp);
+    publishCameraInfo(infoPubTrans, camInfoMsg, stamp);
+    return;
+  }
   auto image = sl_tools::imageToROSmsg(img, imgFrameId, t, mUsePubTimestamps);
   DEBUG_STREAM_VD(
     " * Publishing IMAGE message: " << (mUsePubTimestamps ? get_clock()->now() : t).nanoseconds() <<
@@ -2361,6 +2374,10 @@ void ZedCamera::publishImageWithInfo(
   try {
     publishCameraInfo(infoPub, camInfoMsg, stamp);
     publishCameraInfo(infoPubTrans, camInfoMsg, stamp);
+
+    if (mFlux->publishImage(itPubImg.getTopic(), img, imgFrameId, stamp)) {
+      return;
+    }
 
     // Image retrieved on GPU for the CUDA transport
     if (img.getMemoryType() == sl::MEM::GPU) {
@@ -2510,6 +2527,15 @@ void ZedCamera::publishDepthMapWithInfo(
       depth_cpu = &depth_download;
     }
 
+    if (!mOpenniDepthMode &&
+      mFlux->publishImage(
+        mPubDepth.getTopic(), *depth_cpu, mDepthOptFrameId,
+        mUsePubTimestamps ? get_clock()->now() : t))
+    {
+      publishCameraInfo(mPubDepthCamInfo, mLeftCamInfoMsg, t);
+      publishCameraInfo(mPubDepthCamInfoTrans, mLeftCamInfoMsg, t);
+      return;
+    }
     if (!mOpenniDepthMode) {
       auto depth_img = sl_tools::imageToROSmsg(
         *depth_cpu, mDepthOptFrameId, t,
@@ -2870,6 +2896,7 @@ bool ZedCamera::isPointCloudSubscribed()
       cloudSubCount = mPubCloud->get_subscription_count();
     }
 #endif
+    cloudSubCount += mFlux->cloudSubscribers(mPointcloudTopic, static_cast<size_t>(mPcResol.width) * mPcResol.height * 16);
   } catch (...) {
     rcutils_reset_error();
     DEBUG_STREAM_PC(
@@ -2987,6 +3014,9 @@ void ZedCamera::publishCpuPointCloud(const rclcpp::Time & stamp)
   // in processPointCloud() (zero-copy), so no copy is needed here.
 
   mPcMsg.header.stamp = stamp;
+  if (mFlux->publishCloud(mPointcloudTopic, mPcMsg)) {
+    return;
+  }
 
   // Pointcloud publishing
   DEBUG_PC(" * [publishPointCloud] Publishing POINT CLOUD message");

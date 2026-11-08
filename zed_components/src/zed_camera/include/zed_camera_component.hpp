@@ -25,6 +25,7 @@
 
 #include "sl_version.hpp"
 #include "sl_tools.hpp"
+#include "sl_flux.hpp"
 #include "sl_cuda_buffer.hpp"
 #include "sl_types.hpp"
 #include "visibility_control.hpp"
@@ -1387,6 +1388,8 @@ private:
   // ----> SVO v2
   std::unique_ptr<sl_tools::GNSSReplay> mGnssReplay;
   // <---- SVO v2
+  // Image and point cloud topics over flux, with ENABLE_FLUX=1 at run time
+  std::unique_ptr<sl_tools::FluxTopics> mFlux = std::make_unique<sl_tools::FluxTopics>(*this);
 };
 
 }  // namespace stereolabs
