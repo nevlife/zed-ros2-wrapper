@@ -411,6 +411,7 @@ private:
   sl::RESOLUTION _camResol = sl::RESOLUTION::HD1080; // Default resolution: RESOLUTION_HD1080
   PubRes _pubResolution = PubRes::NATIVE; // Use native grab resolution by default
   double _customDownscaleFactor = 1.0;  // Used to rescale data with user factor
+  bool _pubThrottle = true;  // Sleep after publishing so the loop takes one grab period
   bool _cameraFlip = false; // Camera flipped?
   bool _enableHDR = false; // Enable HDR if supported?
   std::string _opencvCalibFile; // Custom OpenCV calibration file

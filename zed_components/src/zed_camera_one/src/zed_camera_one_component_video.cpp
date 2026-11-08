@@ -632,7 +632,7 @@ void ZedCameraOne::publishImages()
   double vd_period_usec = 1e6 / _camGrabFrameRate;
   double elapsed_usec = _imgPubFreqTimer.toc() * 1e6;
 
-  if (elapsed_usec < vd_period_usec) {
+  if (_pubThrottle && elapsed_usec < vd_period_usec) {
     rclcpp::sleep_for(
       std::chrono::microseconds(
         static_cast<int>(vd_period_usec - elapsed_usec)));
