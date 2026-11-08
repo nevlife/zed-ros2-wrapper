@@ -1,0 +1,6 @@
+# Parameter override applied by zed2i_camera.py
+
+/**:
+    ros__parameters:
+        general:
+            pub_resolution: "NATIVE"

@@ -1,0 +1,7 @@
+# Parameter override applied by zedonex_multi_camera.launch.py
+
+/**:
+    ros__parameters:
+        general:
+            pub_resolution: "NATIVE" # general.raw_nv12 publishes the sensor-resolution ISP buffer
+            raw_nv12: false

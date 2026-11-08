@@ -1,0 +1,8 @@
+# Camera list read by zed2i_multi_camera.launch.py
+
+camera_model: zed2i
+
+serials: [31028044, 30595753]
+
+# Start interval in seconds between the cameras
+stagger: 3.0

@@ -1,0 +1,59 @@
+Panels: []
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: flux_tools/Image
+      Enabled: true
+      Name: cam0
+      Topic: /cam0/zed_node/rgb/color/raw/image
+      Value: true
+    - Class: flux_tools/Image
+      Enabled: true
+      Name: cam1
+      Topic: /cam1/zed_node/rgb/color/raw/image
+      Value: true
+    - Class: flux_tools/Image
+      Enabled: true
+      Name: cam2
+      Topic: /cam2/zed_node/rgb/color/raw/image
+      Value: true
+    - Class: flux_tools/Image
+      Enabled: true
+      Name: cam3
+      Topic: /cam3/zed_node/rgb/color/raw/image
+      Value: true
+    - Class: flux_tools/Image
+      Enabled: true
+      Name: cam4
+      Topic: /cam4/zed_node/rgb/color/raw/image
+      Value: true
+    - Class: flux_tools/Image
+      Enabled: true
+      Name: cam5
+      Topic: /cam5/zed_node/rgb/color/raw/image
+      Value: true
+    - Class: flux_tools/Image
+      Enabled: true
+      Name: cam6
+      Topic: /cam6/zed_node/rgb/color/raw/image
+      Value: true
+    - Class: flux_tools/Image
+      Enabled: true
+      Name: cam7
+      Topic: /cam7/zed_node/rgb/color/raw/image
+      Value: true
+  Enabled: true
+  Global Options:
+    Fixed Frame: map
+    Frame Rate: 60
+  Name: root
+  Tools: []
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+    Saved: ~
+Window Geometry:
+  Height: 1000
+  Width: 1800
