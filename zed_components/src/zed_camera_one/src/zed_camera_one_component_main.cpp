@@ -707,6 +707,16 @@ void ZedCameraOne::getResolutionParams()
   sl_tools::getParam(
     shared_from_this(), "general.pub_throttle", _pubThrottle, _pubThrottle,
     " * Throttle publishing to the grab rate: ");
+  sl_tools::getParam(
+    shared_from_this(), "general.raw_nv12", _rawNv12, _rawNv12,
+    " * Publish the NV12 capture buffer: ");
+#ifndef ZED_HAS_NVBUFSURFACE
+  if (_rawNv12) {
+    RCLCPP_ERROR(
+      get_logger(), "'general.raw_nv12' needs the Jetson NvBufSurface API, not found at build time");
+    _rawNv12 = false;
+  }
+#endif
 }
 
 void ZedCameraOne::getOpencvCalibrationParam()

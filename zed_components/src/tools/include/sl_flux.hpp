@@ -23,6 +23,8 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -51,6 +53,11 @@ public:
     const std::string & topic, const sl::Mat & img, const std::string & frameId,
     const rclcpp::Time & stamp);
   bool publishCloud(const std::string & topic, const sensor_msgs::msg::PointCloud2 & cloud);
+  // An image whose `bytes` of data `fill` writes into the slot; a false fill drops the frame.
+  bool publishImage(
+    const std::string & topic, const std_msgs::msg::Header & header, uint32_t width,
+    uint32_t height, const std::string & encoding, uint32_t step, size_t bytes,
+    const std::function<bool(uint8_t *)> & fill);
 
 private:
   template<class MsgT>

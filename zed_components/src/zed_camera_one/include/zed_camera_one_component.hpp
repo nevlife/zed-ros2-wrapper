@@ -116,6 +116,7 @@ protected:
   void publishImages();
   void publishColorImage(const rclcpp::Time & timeStamp);
   void publishColorRawImage(const rclcpp::Time & timeStamp);
+  void publishRawNv12Image(const rclcpp::Time & timeStamp);
   void publishGrayImage(const rclcpp::Time & timeStamp);
   void publishGrayRawImage(const rclcpp::Time & timeStamp);
   void publishCameraInfos();  // Used to publish camera infos when no video/depth is subscribed
@@ -412,6 +413,7 @@ private:
   PubRes _pubResolution = PubRes::NATIVE; // Use native grab resolution by default
   double _customDownscaleFactor = 1.0;  // Used to rescale data with user factor
   bool _pubThrottle = true;  // Sleep after publishing so the loop takes one grab period
+  bool _rawNv12 = false;  // Publish the NV12 capture buffer as the raw color image
   bool _cameraFlip = false; // Camera flipped?
   bool _enableHDR = false; // Enable HDR if supported?
   std::string _opencvCalibFile; // Custom OpenCV calibration file

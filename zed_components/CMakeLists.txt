@@ -388,6 +388,18 @@ target_link_libraries(zed_camera_one_component
 )
 zed_link_ros_dependencies(zed_camera_one_component ${DEPENDENCIES})
 
+# Jetson only: general.raw_nv12 reads the capture buffer through the NvBufSurface API.
+find_path(NVBUFSURFACE_INCLUDE_DIR nvbufsurface.h
+  PATHS /usr/src/jetson_multimedia_api/include)
+find_library(NVBUFSURFACE_LIBRARY nvbufsurface
+  PATHS /usr/lib/aarch64-linux-gnu/nvidia /usr/lib/aarch64-linux-gnu/tegra)
+if(NVBUFSURFACE_INCLUDE_DIR AND NVBUFSURFACE_LIBRARY)
+  target_include_directories(zed_camera_one_component PRIVATE ${NVBUFSURFACE_INCLUDE_DIR})
+  target_link_libraries(zed_camera_one_component ${NVBUFSURFACE_LIBRARY})
+  target_compile_definitions(zed_camera_one_component PRIVATE
+    ZED_HAS_NVBUFSURFACE SL_ENABLE_ADVANCED_CAPTURE_API)
+endif()
+
 rclcpp_components_register_nodes(zed_camera_one_component "stereolabs::ZedCameraOne")
 set(node_plugins "${node_plugins}stereolabs::ZedCameraOne;$<TARGET_FILE:zed_camera_one_component>\n")
 

@@ -20,6 +20,12 @@
 
 #include <sensor_msgs/image_encodings.hpp>
 
+#include <cstring>
+
+#ifdef ZED_HAS_NVBUFSURFACE
+#include <nvbufsurface.h>
+#endif
+
 namespace
 {
 // Same race guard as in zed_camera_component_video_depth.cpp: see comment there.
@@ -540,7 +546,7 @@ void ZedCameraOne::retrieveImages(bool gpu)
         _sdkGrabTS.getNanoseconds() <<
         " nsec");
   }
-  if (_colorRawSubCount > 0) {
+  if (_colorRawSubCount > 0 && !_rawNv12) {
     retrieved |= (sl::ERROR_CODE::SUCCESS ==
       _zed->retrieveImage(
         _matColorRaw,
@@ -664,8 +670,78 @@ void ZedCameraOne::publishColorImage(const rclcpp::Time & timeStamp)
   }
 }
 
+void ZedCameraOne::publishRawNv12Image(const rclcpp::Time & timeStamp)
+{
+#ifdef ZED_HAS_NVBUFSURFACE
+  sl::RawBuffer raw;
+  if (_zed->retrieveImage(raw) != sl::ERROR_CODE::SUCCESS) {
+    return;
+  }
+  auto * surf = static_cast<NvBufSurface *>(raw.getRawBuffer());
+  NvBufSurfaceParams & s = surf->surfaceList[0];
+  const uint32_t w = _matResol.width;
+  const uint32_t h = _matResol.height;
+  if (s.width != w || s.height != h) {
+    RCLCPP_ERROR_STREAM_ONCE(
+      get_logger(), "The NV12 capture buffer is " << s.width << "x" << s.height <<
+        ": 'general.raw_nv12' needs 'general.pub_resolution' NATIVE");
+    return;
+  }
+  // The SDK pools these surfaces and forbids unmapping them, so a surface stays mapped.
+  auto copy = [surf, &s, w, h](uint8_t * dst) {
+      for (int pl = 0; pl < 2; ++pl) {
+        if (s.mappedAddr.addr[pl] == nullptr &&
+          NvBufSurfaceMap(surf, 0, pl, NVBUF_MAP_READ) != 0)
+        {
+          return false;
+        }
+        NvBufSurfaceSyncForCpu(surf, 0, pl);
+        const auto * src = static_cast<const uint8_t *>(s.mappedAddr.addr[pl]);
+        const uint32_t rows = pl == 0 ? h : h / 2;
+        uint8_t * out = dst + (pl == 0 ? 0 : static_cast<size_t>(w) * h);
+        for (uint32_t r = 0; r < rows; ++r) {
+          std::memcpy(out + static_cast<size_t>(r) * w, src + r * s.planeParams.pitch[pl], w);
+        }
+      }
+      return true;
+    };
+  std_msgs::msg::Header header;
+  header.stamp = _usePubTimestamps ? get_clock()->now() : timeStamp;
+  header.frame_id = _camOptFrameId;
+  const size_t bytes = static_cast<size_t>(w) * h * 3 / 2;
+  publishCameraInfo(_pubColorRawImgInfo, _camInfoRawMsg, header.stamp);
+  publishCameraInfo(_pubColorRawImgInfoTrans, _camInfoRawMsg, header.stamp);
+  if (_flux->publishImage(_pubColorRawImg.getTopic(), header, w, h, "nv12", w, bytes, copy)) {
+    return;
+  }
+  auto msg = std::make_unique<sensor_msgs::msg::Image>();
+  msg->data.resize(bytes);
+  if (!copy(msg->data.data())) {
+    return;
+  }
+  msg->header = header;
+  msg->height = h;
+  msg->width = w;
+  msg->encoding = "nv12";
+  msg->is_bigendian = 0;
+  msg->step = w;
+  // The type-adapted publisher also takes the ROS message type.
+  if (_pubIpcColorRawImg) {
+    _pubIpcColorRawImg->publish(std::move(msg));
+  } else {
+    _pubColorRawImg.publish(std::move(msg));
+  }
+#else
+  (void)timeStamp;
+#endif
+}
+
 void ZedCameraOne::publishColorRawImage(const rclcpp::Time & timeStamp)
 {
+  if (_colorRawSubCount > 0 && _rawNv12) {
+    publishRawNv12Image(timeStamp);
+    return;
+  }
   if (_colorRawSubCount > 0) {
     DEBUG_STREAM_VD("_colorRawSubCount: " << _colorRawSubCount);
     if (_nitrosDisabled) {

@@ -103,24 +103,39 @@ bool FluxTopics::publishImage(
   if (encoding == nullptr || src == nullptr) {
     return false;
   }
+  std_msgs::msg::Header header;
+  header.stamp = stamp;
+  header.frame_id = frameId;
   const size_t step = img.getStepBytes();
   const size_t bytes = step * img.getHeight();
+  return publishImage(
+    topic, header, img.getWidth(), img.getHeight(), encoding, step, bytes,
+    [src, bytes](uint8_t * dst) {
+      std::memcpy(dst, src, bytes);
+      return true;
+    });
+}
+
+bool FluxTopics::publishImage(
+  const std::string & topic, const std_msgs::msg::Header & header, uint32_t width,
+  uint32_t height, const std::string & encoding, uint32_t step, size_t bytes,
+  const std::function<bool(uint8_t *)> & fill)
+{
+  if (!enabled()) {
+    return false;
+  }
   auto * e = entry(_images, topic, bytes);
   std::lock_guard<std::mutex> lock(e->busy);
   auto loan = e->pub->loan();
   auto data = loan.alloc_data(bytes);
-  if (loan && data.size() == bytes) {
-    std_msgs::msg::Header header;
-    header.stamp = stamp;
-    header.frame_id = frameId;
+  if (loan && data.size() == bytes && fill(data.data())) {
     loan.set_header(header);
-    loan.set_height(img.getHeight());
-    loan.set_width(img.getWidth());
+    loan.set_height(height);
+    loan.set_width(width);
     loan.set_encoding(encoding);
     int one = 1;
     loan.set_is_bigendian(*reinterpret_cast<char *>(&one) != 1);
     loan.set_step(step);
-    std::memcpy(data.data(), src, bytes);
     e->pub->publish(std::move(loan));
   }
   return true;
