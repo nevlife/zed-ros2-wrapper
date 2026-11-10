@@ -1485,8 +1485,8 @@ void ZedCamera::processVideoDepth()
 
     DEBUG_VD(" * [processVideoDepth] vd_lock -> try_lock");
     if (vd_lock.try_lock()) {
-      // Retrieve on GPU the data published with the CUDA transport
-      bool gpu = mCudaBufferActive;
+      // Retrieve on GPU the data published with the CUDA transport or as flux GPU images
+      bool gpu = mCudaBufferActive || mFlux->gpuImages();
 #ifdef FOUND_ISAAC_ROS_NITROS
       if (!_nitrosDisabled) {
         gpu = true;

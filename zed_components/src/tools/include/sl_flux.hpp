@@ -43,12 +43,16 @@ public:
 
   static bool enabled() {return flux_wrapper::use_flux();}
 
+  // Image topics made after this go out in GPU memory (flux_wrapper::Device::Cuda).
+  void setGpuImages(bool gpu) {_gpuImages = gpu;}
+  bool gpuImages() const {return _gpuImages && enabled();}
+
   // Subscribers of `topic` over flux; 0 when flux is off. `bytes` sizes the slots of a topic
   // not published yet.
   size_t imageSubscribers(const std::string & topic, size_t bytes);
   size_t cloudSubscribers(const std::string & topic, size_t bytes);
 
-  // False when flux is off or the data is not in host memory: publish it the ROS way.
+  // False when flux is off: publish it the ROS way. The data may be in host or GPU memory.
   bool publishImage(
     const std::string & topic, const sl::Mat & img, const std::string & frameId,
     const rclcpp::Time & stamp);
@@ -78,6 +82,7 @@ private:
     size_t bytes);
 
   rclcpp::Node & _node;
+  bool _gpuImages = false;
   std::mutex _mapMutex;
   std::map<std::string, std::unique_ptr<Entry<sensor_msgs::msg::Image>>> _images;
   std::map<std::string, std::unique_ptr<Entry<sensor_msgs::msg::PointCloud2>>> _clouds;

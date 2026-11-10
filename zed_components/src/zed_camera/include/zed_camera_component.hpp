@@ -554,6 +554,7 @@ private:
   // Topic Enablers
 #if (ZED_SDK_MAJOR_VERSION * 10 + ZED_SDK_MINOR_VERSION) >= 51
   bool m24bitMode = false;
+  bool mFluxGpuImages = false;
 #endif
   bool mPublishSensImu = true;
   bool mPublishSensImuRaw = false;

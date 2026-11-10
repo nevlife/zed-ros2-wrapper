@@ -912,6 +912,10 @@ void ZedCamera::getTopicEnableParams()
   }
 #endif
   sl_tools::getParam(
+    shared_from_this(), "video.flux_gpu_images", mFluxGpuImages, mFluxGpuImages,
+    " * flux images in GPU memory: ");
+  mFlux->setGpuImages(mFluxGpuImages);
+  sl_tools::getParam(
     shared_from_this(), "video.publish_left_right", mPublishImgLeftRight,
     mPublishImgLeftRight, " * Publish Left/Right images: ");
   sl_tools::getParam(

@@ -17,6 +17,8 @@
 #include <sensor_msgs/image_encodings.hpp>
 
 #include <cstring>
+#include <type_traits>
+#include <vector>
 
 namespace sl_tools
 {
@@ -41,6 +43,20 @@ const char * encodingOf(sl::MAT_TYPE type)
     default: return nullptr;
   }
 }
+template<class LoanT>
+void setImageFields(
+  LoanT & loan, const std_msgs::msg::Header & header, uint32_t width, uint32_t height,
+  const std::string & encoding, uint32_t step)
+{
+  loan.set_header(header);
+  loan.set_height(height);
+  loan.set_width(width);
+  loan.set_encoding(encoding);
+  int one = 1;
+  loan.set_is_bigendian(*reinterpret_cast<char *>(&one) != 1);
+  loan.set_step(step);
+}
+
 }  // namespace
 
 FluxTopics::FluxTopics(rclcpp::Node & node)
@@ -58,6 +74,9 @@ FluxTopics::Entry<MsgT> * FluxTopics::entry(
     flux_wrapper::PublisherOptions options;
     options.max_message_size = static_cast<uint32_t>(bytes + kFrameOverhead);
     options.slot_count = kSlotCount;
+    if (std::is_same<MsgT, sensor_msgs::msg::Image>::value && _gpuImages) {
+      options.device = flux_wrapper::Device::Cuda;
+    }
     e->pub = std::make_unique<flux_wrapper::Publisher<MsgT>>(
       _node, topic, rclcpp::QoS(1), options);
   }
@@ -95,25 +114,30 @@ bool FluxTopics::publishImage(
   const std::string & topic, const sl::Mat & img, const std::string & frameId,
   const rclcpp::Time & stamp)
 {
-  if (!enabled() || img.getMemoryType() == sl::MEM::GPU) {
+  if (!enabled()) {
     return false;
   }
+  // A GPU Mat is pitched: its step can exceed width * pixel size, and goes out as is.
+  const sl::MEM mem = img.getMemoryType() == sl::MEM::GPU ? sl::MEM::GPU : sl::MEM::CPU;
   const char * encoding = encodingOf(img.getDataType());
-  const auto * src = img.getPtr<sl::uchar1>();
+  const auto * src = img.getPtr<sl::uchar1>(mem);
   if (encoding == nullptr || src == nullptr) {
     return false;
   }
   std_msgs::msg::Header header;
   header.stamp = stamp;
   header.frame_id = frameId;
-  const size_t step = img.getStepBytes();
+  const size_t step = img.getStepBytes(mem);
   const size_t bytes = step * img.getHeight();
-  return publishImage(
-    topic, header, img.getWidth(), img.getHeight(), encoding, step, bytes,
-    [src, bytes](uint8_t * dst) {
-      std::memcpy(dst, src, bytes);
-      return true;
-    });
+  auto * e = entry(_images, topic, bytes);
+  std::lock_guard<std::mutex> lock(e->busy);
+  auto loan = e->pub->loan();
+  auto data = loan.alloc_buffer(bytes);
+  if (loan && data && data.copy_from(src, bytes)) {
+    setImageFields(loan, header, img.getWidth(), img.getHeight(), encoding, step);
+    e->pub->publish(std::move(loan));
+  }
+  return true;
 }
 
 bool FluxTopics::publishImage(
@@ -127,15 +151,22 @@ bool FluxTopics::publishImage(
   auto * e = entry(_images, topic, bytes);
   std::lock_guard<std::mutex> lock(e->busy);
   auto loan = e->pub->loan();
-  auto data = loan.alloc_data(bytes);
-  if (loan && data.size() == bytes && fill(data.data())) {
-    loan.set_header(header);
-    loan.set_height(height);
-    loan.set_width(width);
-    loan.set_encoding(encoding);
-    int one = 1;
-    loan.set_is_bigendian(*reinterpret_cast<char *>(&one) != 1);
-    loan.set_step(step);
+  auto data = loan.alloc_buffer(bytes);
+  if (!loan || !data) {
+    return true;
+  }
+  // A slot in GPU memory has no host mapping: fill a host buffer and copy it up. The copy is
+  // queued, so the buffer lives until publish() returns.
+  std::vector<uint8_t> staging;
+  bool filled = false;
+  if (!data.host().empty()) {
+    filled = fill(data.host().data());
+  } else {
+    staging.resize(bytes);
+    filled = fill(staging.data()) && data.copy_from(staging.data(), bytes);
+  }
+  if (filled) {
+    setImageFields(loan, header, width, height, encoding, step);
     e->pub->publish(std::move(loan));
   }
   return true;
