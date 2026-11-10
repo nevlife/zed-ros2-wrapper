@@ -46,6 +46,11 @@ void ZedCameraOne::getVideoParams()
     _enableHDR, " * Enable HDR: ");
 
   sl_tools::getParam(
+    shared_from_this(), "video.flux_gpu_images", _fluxGpuImages, _fluxGpuImages,
+    " * flux images in GPU memory: ");
+  _flux->setGpuImages(_fluxGpuImages);
+
+  sl_tools::getParam(
     shared_from_this(), "video.saturation", _camSaturation,
     _camSaturation, " * Saturation: ", true, 0, 8);
   _camDynParMapChanged["video.saturation"] = true;
@@ -506,8 +511,8 @@ void ZedCameraOne::handleImageRetrievalAndPublishing()
   if (_imageSubscribed) {
     DEBUG_STREAM_VD("Retrieving video data");
 
-    // Retrieve on GPU the images published with the CUDA transport
-    bool gpu = _cudaBufferActive;
+    // Retrieve on GPU the images published with the CUDA transport or as flux GPU images
+    bool gpu = _cudaBufferActive || _flux->gpuImages();
 #ifdef FOUND_ISAAC_ROS_NITROS
     if (!_nitrosDisabled) {
       gpu = true;

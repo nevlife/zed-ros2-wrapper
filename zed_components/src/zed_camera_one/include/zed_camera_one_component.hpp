@@ -414,6 +414,7 @@ private:
   double _customDownscaleFactor = 1.0;  // Used to rescale data with user factor
   bool _pubThrottle = true;  // Sleep after publishing so the loop takes one grab period
   bool _rawNv12 = false;  // Publish the NV12 capture buffer as the raw color image
+  bool _fluxGpuImages = false;  // Retrieve and publish the images in GPU memory over flux
   bool _cameraFlip = false; // Camera flipped?
   bool _enableHDR = false; // Enable HDR if supported?
   std::string _opencvCalibFile; // Custom OpenCV calibration file
