@@ -273,6 +273,16 @@ def launch_setup(context, *args, **kwargs):
     info = 'Using camera configuration file: ' + config_camera_path
     return_array.append(LogInfo(msg=TextSubstitution(text=info)))
 
+    # flux configuration file, for every camera model
+    config_flux_path = os.path.join(
+        get_package_share_directory('zed_wrapper'),
+        'config',
+        'flux.yaml'
+    )
+
+    info = 'Using flux configuration file: ' + config_flux_path
+    return_array.append(LogInfo(msg=TextSubstitution(text=info)))
+
     # Object Detection configuration file
     info = 'Using Object Detection configuration file: ' +\
         object_detection_config_path.perform(context)
@@ -426,6 +436,7 @@ def launch_setup(context, *args, **kwargs):
         # YAML files
         config_common_path_val,  # Common parameters
         config_camera_path,  # Camera related parameters
+        config_flux_path,  # flux and GPU parameters
         object_detection_config_path,  # Object detection parameters
         custom_object_detection_config_path  # Custom object detection parameters
     ]

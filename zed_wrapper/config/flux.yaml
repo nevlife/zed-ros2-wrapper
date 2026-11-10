@@ -1,0 +1,9 @@
+# config/flux.yaml
+# flux and GPU parameters, loaded by zed_camera.launch.py for every camera model, after the
+# camera configuration file and before ros_params_override_path.
+
+---
+/**:
+    ros__parameters:
+        video:
+            flux_gpu_images: false # With ENABLE_FLUX=1, publish images in GPU memory. Read by the stereo and the ZED X One nodes
