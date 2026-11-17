@@ -95,6 +95,18 @@ def _auto_type(value):
     return value
 
 
+# The image topics that image_transport may compress to JPEG; depth and confidence are floats.
+STEREO_JPEG_TOPICS = [
+    sensor + '/' + kind + '/' + stage + '/image'
+    for sensor in ('rgb', 'left', 'right') for kind in ('color', 'gray') for stage in ('rect', 'raw')
+] + ['stereo/color/rect/image', 'stereo/color/raw/image', 'disparity/image', 'image/depth_image',
+     'roi_mask/image']
+MONO_JPEG_TOPICS = [
+    'rgb/' + kind + '/' + stage + '/image' for kind in ('color', 'gray') for stage in ('rect', 'raw')
+]
+JPEG_QUALITY = 95
+
+
 def _parse_param_overrides(overrides_str):
     """Parse semicolon-separated 'key:=value' pairs into a dict."""
     result = {}
@@ -440,6 +452,11 @@ def launch_setup(context, *args, **kwargs):
         object_detection_config_path,  # Object detection parameters
         custom_object_detection_config_path  # Custom object detection parameters
     ]
+    # image_transport names the JPEG quality of a topic after the node and the topic.
+    jpeg_topics = STEREO_JPEG_TOPICS if is_stereo_model else MONO_JPEG_TOPICS
+    node_parameters.append({
+        '.' + node_name_val + '.' + topic.replace('/', '.') + '.compressed.jpeg_quality':
+            JPEG_QUALITY for topic in jpeg_topics})
 
     if (ros_params_override_path_val != ''):
         node_parameters.append(ros_params_override_path)
