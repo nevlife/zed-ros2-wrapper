@@ -1,6 +1,7 @@
-# Parameter override applied by zed2i_camera.py
+# Parameter override applied by zed2i.launch.py
 
 /**:
     ros__parameters:
         general:
             pub_resolution: "NATIVE"
+            grab_frame_rate: 30 # two ZED 2i on one USB hub do not sustain 60 fps

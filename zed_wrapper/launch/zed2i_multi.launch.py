@@ -12,28 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import os
+
 import yaml
 
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import (
-    DeclareLaunchArgument,
-    IncludeLaunchDescription,
-    OpaqueFunction,
-    TimerAction
-)
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
 share_dir = get_package_share_directory('zed_wrapper')
 
-# Camera list: model, serials and start interval
-default_cameras_path = os.path.join(share_dir, 'config', 'multi_camera.yaml')
-
-# Parameter override applied to every camera
-default_override_path = os.path.join(share_dir, 'config', 'zedonex_multi_override.yaml')
+# Camera list
+default_cameras_path = os.path.join(share_dir, 'config', 'zed2i_multi.yaml')
 
 
 def parse_array_param(param):
@@ -50,20 +44,16 @@ def launch_setup(context, *args, **kwargs):
     serials = parse_array_param(LaunchConfiguration('serials').perform(context))
     if not serials:
         serials = [str(sn) for sn in cameras['serials']]
-    # Opening the cameras at once fails with CAMERA STREAM FAILED TO START
     stagger = float(cameras['stagger'])
 
+    # Each camera takes the parameters of zed2i.launch.py, which arguments of this launch set.
     actions = []
     for i, sn in enumerate(serials):
         include = IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(os.path.join(share_dir, 'launch', 'zed_camera.launch.py')),
+            PythonLaunchDescriptionSource(os.path.join(share_dir, 'launch', 'zed2i.launch.py')),
             launch_arguments={
-                'camera_model': cameras['camera_model'],
-                'camera_name': 'cam' + str(i),
+                'camera_name': 'zed2i_' + str(i),
                 'serial_number': sn,
-                'ros_params_override_path': default_override_path,
-                'publish_urdf': 'false',
-                'publish_tf': 'false'
             }.items()
         )
         actions.append(TimerAction(period=i * stagger, actions=[include]))
@@ -76,7 +66,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 'serials',
                 default_value='',
-                description='Serial numbers of the cameras to open. Default: the list in config/multi_camera.yaml'),
+                description='Serial numbers of the cameras to open. Default: the list in config/zed2i_multi.yaml'),
             OpaqueFunction(function=launch_setup)
         ]
     )

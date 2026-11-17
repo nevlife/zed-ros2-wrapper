@@ -1,6 +1,4 @@
-# Camera list read by zed2i_multi_camera.launch.py
-
-camera_model: zed2i
+# Camera list read by zed2i_multi.launch.py
 
 serials: [31028044, 30595753]
 
