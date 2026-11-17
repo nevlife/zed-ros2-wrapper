@@ -47,16 +47,20 @@ public:
   void setGpuImages(bool gpu) {_gpuImages = gpu;}
   bool gpuImages() const {return _gpuImages && enabled();}
 
-  // Subscribers of `topic` over flux; 0 when flux is off. `bytes` sizes the slots of a topic
-  // not published yet.
-  size_t imageSubscribers(const std::string & topic, size_t bytes);
-  size_t cloudSubscribers(const std::string & topic, size_t bytes);
+  // Subscribers of `topic` over flux; 0 when flux is off. A stereo topic holds two images side
+  // by side, which take a larger slot in GPU memory.
+  size_t imageSubscribers(const std::string & topic, bool stereo = false);
+  size_t cloudSubscribers(const std::string & topic);
 
   // False when flux is off: publish it the ROS way. The data may be in host or GPU memory.
   bool publishImage(
     const std::string & topic, const sl::Mat & img, const std::string & frameId,
     const rclcpp::Time & stamp);
   bool publishCloud(const std::string & topic, const sensor_msgs::msg::PointCloud2 & cloud);
+  // `left` and `right` side by side, as one image of twice the width.
+  bool publishStereoImage(
+    const std::string & topic, const sl::Mat & left, const sl::Mat & right,
+    const std::string & frameId, const rclcpp::Time & stamp);
   // An image whose `bytes` of data `fill` writes into the slot; a false fill drops the frame.
   bool publishImage(
     const std::string & topic, const std_msgs::msg::Header & header, uint32_t width,
@@ -75,11 +79,11 @@ private:
   template<class MsgT>
   Entry<MsgT> * entry(
     std::map<std::string, std::unique_ptr<Entry<MsgT>>> & entries, const std::string & topic,
-    size_t bytes);
+    bool stereo = false);
   template<class MsgT>
   size_t subscribers(
     std::map<std::string, std::unique_ptr<Entry<MsgT>>> & entries, const std::string & topic,
-    size_t bytes);
+    bool stereo);
 
   rclcpp::Node & _node;
   bool _gpuImages = false;

@@ -310,6 +310,9 @@ void ZedCameraOne::getTopicEnableParams()
     shared_from_this(), "video.publish_rgb", _publishImgRgb,
     _publishImgRgb, " * Publish RGB image: ");
   sl_tools::getParam(
+    shared_from_this(), "video.publish_rect", _publishImgRect,
+    _publishImgRect, " * Publish Rect images: ");
+  sl_tools::getParam(
     shared_from_this(), "video.publish_raw", _publishImgRaw,
     _publishImgRaw, " * Publish Raw images: ");
   sl_tools::getParam(

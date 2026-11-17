@@ -312,20 +312,18 @@ void ZedCameraOne::initVideoPublishers()
 
   // Camera publishers
   if (_nitrosDisabled) {
-    if (_publishImgRgb) {
+    if (_publishImgRgb && _publishImgRect) {
       create_dual_pub(_imgColorTopic, _pubIpcColorImg, _pubColorImg);
-
-      if (_publishImgRaw) {
-        create_dual_pub(_imgColorRawTopic, _pubIpcColorRawImg, _pubColorRawImg);
-      }
+    }
+    if (_publishImgRgb && _publishImgRaw) {
+      create_dual_pub(_imgColorRawTopic, _pubIpcColorRawImg, _pubColorRawImg);
     }
 
-    if (_publishImgGray) {
+    if (_publishImgGray && _publishImgRect) {
       create_dual_pub(_imgGrayTopic, _pubIpcGrayImg, _pubGrayImg);
-
-      if (_publishImgRaw) {
-        create_dual_pub(_imgRawGrayTopic, _pubIpcGrayRawImg, _pubGrayRawImg);
-      }
+    }
+    if (_publishImgGray && _publishImgRaw) {
+      create_dual_pub(_imgRawGrayTopic, _pubIpcGrayRawImg, _pubGrayRawImg);
     }
   } else {
 #ifdef FOUND_ISAAC_ROS_NITROS
@@ -340,19 +338,18 @@ void ZedCameraOne::initVideoPublishers()
           get_logger(), "  * Advertised on topic: " << topic + "/nitros [isaac_ros_nitros]");
         return ret;
       };
-    if (_publishImgRgb) {
+    if (_publishImgRgb && _publishImgRect) {
       _nitrosPubColorImg = make_nitros_img_pub(_imgColorTopic);
-
-      if (_publishImgRaw) {
-        _nitrosPubColorRawImg = make_nitros_img_pub(_imgColorRawTopic);
-      }
+    }
+    if (_publishImgRgb && _publishImgRaw) {
+      _nitrosPubColorRawImg = make_nitros_img_pub(_imgColorRawTopic);
     }
 
-    if (_publishImgGray) {
+    if (_publishImgGray && _publishImgRect) {
       _nitrosPubGrayImg = make_nitros_img_pub(_imgGrayTopic);
-      if (_publishImgRaw) {
-        _nitrosPubGrayRawImg = make_nitros_img_pub(_imgRawGrayTopic);
-      }
+    }
+    if (_publishImgGray && _publishImgRaw) {
+      _nitrosPubGrayRawImg = make_nitros_img_pub(_imgRawGrayTopic);
     }
 #endif
   }
@@ -377,24 +374,22 @@ void ZedCameraOne::initVideoPublishers()
       return pub;
     };
 
-  if (_publishImgRgb) {
+  if (_publishImgRgb && _publishImgRect) {
     _pubColorImgInfo = make_cam_info_pub(_imgColorTopic);
     _pubColorImgInfoTrans = make_cam_info_trans_pub(_imgColorTopic);
-
-    if (_publishImgRaw) {
-      _pubColorRawImgInfo = make_cam_info_pub(_imgColorRawTopic);
-      _pubColorRawImgInfoTrans = make_cam_info_trans_pub(_imgColorRawTopic);
-    }
+  }
+  if (_publishImgRgb && _publishImgRaw) {
+    _pubColorRawImgInfo = make_cam_info_pub(_imgColorRawTopic);
+    _pubColorRawImgInfoTrans = make_cam_info_trans_pub(_imgColorRawTopic);
   }
 
-  if (_publishImgGray) {
+  if (_publishImgGray && _publishImgRect) {
     _pubGrayImgInfo = make_cam_info_pub(_imgGrayTopic);
     _pubGrayImgInfoTrans = make_cam_info_trans_pub(_imgGrayTopic);
-
-    if (_publishImgRaw) {
-      _pubGrayRawImgInfo = make_cam_info_pub(_imgRawGrayTopic);
-      _pubGrayRawImgInfoTrans = make_cam_info_trans_pub(_imgRawGrayTopic);
-    }
+  }
+  if (_publishImgGray && _publishImgRaw) {
+    _pubGrayRawImgInfo = make_cam_info_pub(_imgRawGrayTopic);
+    _pubGrayRawImgInfoTrans = make_cam_info_trans_pub(_imgRawGrayTopic);
   }
   // <---- Camera Info publishers
 }
@@ -472,11 +467,9 @@ bool ZedCameraOne::areImageTopicsSubscribed()
       auto ipc_sub_count = [](const auto & pub) -> size_t {
           return pub ? pub->get_subscription_count() : 0;
         };
-      // flux subscribers of the same topic, with ENABLE_FLUX=1. Every image topic holds at most
-      // four bytes a pixel.
-      const size_t flux_bytes = _matResol.width * _matResol.height * 4;
+      // flux subscribers of the same topic, with ENABLE_FLUX=1.
       auto flux_sub_count = [&](const image_transport::Publisher & pub) -> size_t {
-          return _flux->imageSubscribers(pub.getTopic(), flux_bytes);
+          return _flux->imageSubscribers(pub.getTopic());
         };
       _colorSubCount = _pubColorImg.getNumSubscribers() + ipc_sub_count(_pubIpcColorImg) + flux_sub_count(_pubColorImg);
       _colorRawSubCount = _pubColorRawImg.getNumSubscribers() + ipc_sub_count(_pubIpcColorRawImg) + flux_sub_count(_pubColorRawImg);
@@ -872,9 +865,8 @@ void ZedCameraOne::publishImageWithInfo(
     publishCameraInfo(infoPub, camInfoMsg, stamp);
     publishCameraInfo(infoPubTrans, camInfoMsg, stamp);
 
-    if (_flux->publishImage(itPubImg.getTopic(), img, imgFrameId, stamp)) {
-      return;
-    }
+    // flux subscribers take the image from flux; each ROS path below runs only for its own.
+    _flux->publishImage(itPubImg.getTopic(), img, imgFrameId, stamp);
 
     // Image retrieved on GPU for the CUDA transport
     if (img.getMemoryType() == sl::MEM::GPU) {

@@ -14,6 +14,7 @@
 
 #include "sl_flux.hpp"
 
+#include <cuda_runtime.h>
 #include <sensor_msgs/image_encodings.hpp>
 
 #include <cstring>
@@ -25,9 +26,8 @@ namespace sl_tools
 
 namespace
 {
-// Room for the header, the strings and the alignment of the data field.
-constexpr size_t kFrameOverhead = 1 << 20;
-constexpr uint32_t kSlotCount = 4;
+// Side by side at HD1200, BGRA: 17.6 MiB, over the flux default of 10 MiB.
+constexpr uint32_t kStereoDeviceBytes = 18u << 20;
 
 const char * encodingOf(sl::MAT_TYPE type)
 {
@@ -65,17 +65,18 @@ FluxTopics::FluxTopics(rclcpp::Node & node)
 template<class MsgT>
 FluxTopics::Entry<MsgT> * FluxTopics::entry(
   std::map<std::string, std::unique_ptr<Entry<MsgT>>> & entries, const std::string & topic,
-  size_t bytes)
+  bool stereo)
 {
   std::lock_guard<std::mutex> lock(_mapMutex);
   auto & e = entries[topic];
   if (!e) {
     e = std::make_unique<Entry<MsgT>>();
     flux_wrapper::PublisherOptions options;
-    options.max_message_size = static_cast<uint32_t>(bytes + kFrameOverhead);
-    options.slot_count = kSlotCount;
     if (std::is_same<MsgT, sensor_msgs::msg::Image>::value && _gpuImages) {
       options.device = flux_wrapper::Device::Cuda;
+      if (stereo) {
+        options.max_device_data_size = kStereoDeviceBytes;
+      }
     }
     e->pub = std::make_unique<flux_wrapper::Publisher<MsgT>>(
       _node, topic, rclcpp::QoS(1), options);
@@ -86,12 +87,12 @@ FluxTopics::Entry<MsgT> * FluxTopics::entry(
 template<class MsgT>
 size_t FluxTopics::subscribers(
   std::map<std::string, std::unique_ptr<Entry<MsgT>>> & entries, const std::string & topic,
-  size_t bytes)
+  bool stereo)
 {
   if (!enabled() || topic.empty()) {
     return 0;
   }
-  auto * e = entry(entries, topic, bytes);
+  auto * e = entry(entries, topic, stereo);
   // A publish under way holds the publisher: the last count stands in for this one.
   std::unique_lock<std::mutex> lock(e->busy, std::try_to_lock);
   if (lock) {
@@ -100,14 +101,14 @@ size_t FluxTopics::subscribers(
   return e->subscribers;
 }
 
-size_t FluxTopics::imageSubscribers(const std::string & topic, size_t bytes)
+size_t FluxTopics::imageSubscribers(const std::string & topic, bool stereo)
 {
-  return subscribers(_images, topic, bytes);
+  return subscribers(_images, topic, stereo);
 }
 
-size_t FluxTopics::cloudSubscribers(const std::string & topic, size_t bytes)
+size_t FluxTopics::cloudSubscribers(const std::string & topic)
 {
-  return subscribers(_clouds, topic, bytes);
+  return subscribers(_clouds, topic, false);
 }
 
 bool FluxTopics::publishImage(
@@ -129,7 +130,7 @@ bool FluxTopics::publishImage(
   header.frame_id = frameId;
   const size_t step = img.getStepBytes(mem);
   const size_t bytes = step * img.getHeight();
-  auto * e = entry(_images, topic, bytes);
+  auto * e = entry(_images, topic);
   std::lock_guard<std::mutex> lock(e->busy);
   auto loan = e->pub->loan();
   auto data = loan.alloc_buffer(bytes);
@@ -148,7 +149,7 @@ bool FluxTopics::publishImage(
   if (!enabled()) {
     return false;
   }
-  auto * e = entry(_images, topic, bytes);
+  auto * e = entry(_images, topic);
   std::lock_guard<std::mutex> lock(e->busy);
   auto loan = e->pub->loan();
   auto data = loan.alloc_buffer(bytes);
@@ -178,7 +179,7 @@ bool FluxTopics::publishCloud(
   if (!enabled()) {
     return false;
   }
-  auto * e = entry(_clouds, topic, cloud.data.size());
+  auto * e = entry(_clouds, topic);
   std::lock_guard<std::mutex> lock(e->busy);
   auto loan = e->pub->loan();
   auto data = loan.alloc_data(cloud.data.size());
@@ -194,6 +195,54 @@ bool FluxTopics::publishCloud(
     std::memcpy(data.data(), cloud.data.data(), cloud.data.size());
     e->pub->publish(std::move(loan));
   }
+  return true;
+}
+
+bool FluxTopics::publishStereoImage(
+  const std::string & topic, const sl::Mat & left, const sl::Mat & right,
+  const std::string & frameId, const rclcpp::Time & stamp)
+{
+  if (!enabled()) {
+    return false;
+  }
+  const sl::MEM mem = left.getMemoryType() == sl::MEM::GPU ? sl::MEM::GPU : sl::MEM::CPU;
+  const char * encoding = encodingOf(left.getDataType());
+  const auto * l = left.getPtr<sl::uchar1>(mem);
+  const auto * r = right.getPtr<sl::uchar1>(mem);
+  if (encoding == nullptr || l == nullptr || r == nullptr ||
+    left.getWidth() != right.getWidth() || left.getHeight() != right.getHeight() ||
+    left.getDataType() != right.getDataType())
+  {
+    return false;
+  }
+  // The rows of a pitched GPU Mat are copied without their padding.
+  const size_t half = left.getWidth() * left.getPixelBytes();
+  const size_t row = 2 * half;
+  const size_t height = left.getHeight();
+  std_msgs::msg::Header header;
+  header.stamp = stamp;
+  header.frame_id = frameId;
+  auto * e = entry(_images, topic, true);
+  std::lock_guard<std::mutex> lock(e->busy);
+  auto loan = e->pub->loan();
+  auto data = loan.alloc_buffer(row * height);
+  if (!loan || !data) {
+    return true;
+  }
+  auto * dst = static_cast<uint8_t *>(data.on_device() ? data.device_ptr() : data.host().data());
+  if (
+    cudaMemcpy2D(
+      dst, row, l, left.getStepBytes(mem), half, height, cudaMemcpyDefault) != cudaSuccess ||
+    cudaMemcpy2D(
+      dst + half, row, r, right.getStepBytes(mem), half, height, cudaMemcpyDefault) != cudaSuccess)
+  {
+    (void)cudaGetLastError();
+    return true;
+  }
+  setImageFields(
+    loan, header, static_cast<uint32_t>(2 * left.getWidth()), static_cast<uint32_t>(height),
+    encoding, static_cast<uint32_t>(row));
+  e->pub->publish(std::move(loan));
   return true;
 }
 

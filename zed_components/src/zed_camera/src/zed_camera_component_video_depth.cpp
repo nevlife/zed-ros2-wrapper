@@ -938,11 +938,9 @@ bool ZedCamera::updateVideoDepthSubscribers(bool force)
   auto ipc_sub_count = [](const auto & pub) -> size_t {
       return pub ? pub->get_subscription_count() : 0;
     };
-  // flux subscribers of the same topic, with ENABLE_FLUX=1. Every image topic holds at most four
-  // bytes a pixel.
-  const size_t flux_bytes = mMatResol.width * mMatResol.height * 4;
+  // flux subscribers of the same topic, with ENABLE_FLUX=1.
   auto flux_sub_count = [&](const image_transport::Publisher & pub) -> size_t {
-      return mFlux->imageSubscribers(pub.getTopic(), flux_bytes);
+      return mFlux->imageSubscribers(pub.getTopic());
     };
 
   try {
@@ -979,8 +977,10 @@ bool ZedCamera::updateVideoDepthSubscribers(bool force)
         }
       }
       if (mPublishImgStereo) {
-        mStereoSubCount = mPubStereo.getNumSubscribers() + ipc_sub_count(mPubIpcStereo);
-        mStereoRawSubCount = mPubRawStereo.getNumSubscribers() + ipc_sub_count(mPubIpcRawStereo);
+        mStereoSubCount = mPubStereo.getNumSubscribers() + ipc_sub_count(mPubIpcStereo) +
+          mFlux->imageSubscribers(mPubStereo.getTopic(), true);
+        mStereoRawSubCount = mPubRawStereo.getNumSubscribers() + ipc_sub_count(mPubIpcRawStereo) +
+          mFlux->imageSubscribers(mPubRawStereo.getTopic(), true);
       }
     } else {
 #ifdef FOUND_ISAAC_ROS_NITROS
@@ -1057,7 +1057,7 @@ bool ZedCamera::updateVideoDepthSubscribers(bool force)
         mPcSubCount = mPubCloud->get_subscription_count();
       }
 #endif
-      mPcSubCount += mFlux->cloudSubscribers(mPointcloudTopic, static_cast<size_t>(mPcResol.width) * mPcResol.height * 16);
+      mPcSubCount += mFlux->cloudSubscribers(mPointcloudTopic);
     }
   } catch (...) {
     rcutils_reset_error();
@@ -2173,6 +2173,13 @@ void ZedCamera::publishStereoImages(const rclcpp::Time & t)
 {
   if (mStereoSubCount > 0) {
     DEBUG_STREAM_VD(" * mStereoSubCount: " << mStereoSubCount);
+    mFlux->publishStereoImage(
+      mPubStereo.getTopic(), mMatLeft, mMatRight, mCenterFrameId,
+      mUsePubTimestamps ? get_clock()->now() : t);
+    const bool ipc_sub = mPubIpcStereo && mPubIpcStereo->get_subscription_count() > 0;
+    if (!ipc_sub && mPubStereo.getNumSubscribers() == 0) {
+      return;
+    }
     if (mMatLeft.getMemoryType() == sl::MEM::GPU) {
       publishGpuStereoImages(mMatLeft, mMatRight, mPubIpcStereo, mPubStereo, t);
       return;
@@ -2203,6 +2210,13 @@ void ZedCamera::publishStereoRawImages(const rclcpp::Time & t)
 {
   if (mStereoRawSubCount > 0) {
     DEBUG_STREAM_VD(" * mStereoRawSubCount: " << mStereoRawSubCount);
+    mFlux->publishStereoImage(
+      mPubRawStereo.getTopic(), mMatLeftRaw, mMatRightRaw, mCenterFrameId,
+      mUsePubTimestamps ? get_clock()->now() : t);
+    const bool ipc_sub = mPubIpcRawStereo && mPubIpcRawStereo->get_subscription_count() > 0;
+    if (!ipc_sub && mPubRawStereo.getNumSubscribers() == 0) {
+      return;
+    }
     if (mMatLeftRaw.getMemoryType() == sl::MEM::GPU) {
       publishGpuStereoImages(mMatLeftRaw, mMatRightRaw, mPubIpcRawStereo, mPubRawStereo, t);
       return;
@@ -2375,9 +2389,8 @@ void ZedCamera::publishImageWithInfo(
     publishCameraInfo(infoPub, camInfoMsg, stamp);
     publishCameraInfo(infoPubTrans, camInfoMsg, stamp);
 
-    if (mFlux->publishImage(itPubImg.getTopic(), img, imgFrameId, stamp)) {
-      return;
-    }
+    // flux subscribers take the image from flux; each ROS path below runs only for its own.
+    mFlux->publishImage(itPubImg.getTopic(), img, imgFrameId, stamp);
 
     // Image retrieved on GPU for the CUDA transport
     if (img.getMemoryType() == sl::MEM::GPU) {
@@ -2896,7 +2909,7 @@ bool ZedCamera::isPointCloudSubscribed()
       cloudSubCount = mPubCloud->get_subscription_count();
     }
 #endif
-    cloudSubCount += mFlux->cloudSubscribers(mPointcloudTopic, static_cast<size_t>(mPcResol.width) * mPcResol.height * 16);
+    cloudSubCount += mFlux->cloudSubscribers(mPointcloudTopic);
   } catch (...) {
     rcutils_reset_error();
     DEBUG_STREAM_PC(

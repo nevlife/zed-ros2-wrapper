@@ -448,6 +448,7 @@ private:
   bool _24bitMode = false;
 #endif
   bool _publishImgRgb = true;
+  bool _publishImgRect = true;
   bool _publishImgRaw = false;
   bool _publishImgGray = false;
   bool _publishSensImu = true;
